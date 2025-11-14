@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<title>SteinHQ Cycling Overlay</title>
+<style>
+    body {
+        margin: 0;
+        font-family: Arial, sans-serif;
+        background: rgba(0,0,0,0);
+        color: #ff8c00;
+    }
+
+    .container {
+        padding: 10px 20px;
+        border-radius: 12px;
+        background: rgba(0,0,0,0.35);
+        backdrop-filter: blur(6px);
+        width: 360px;
+    }
+
+    .value {
+        font-size: 32px;
+        font-weight: bold;
+        color: #FFA533;
+    }
+
+    .value-small {
+        font-size: 18px;
+        font-weight: bold;
+    }
+
+    .label {
+        font-size: 13px;
+        text-transform: uppercase;
+        color: #dddddd;
+        margin-top: -8px;
+    }
+
+    .row {
+        margin-bottom: 14px;
+    }
+
+    .row-small {
+        margin-bottom: 8px;
+    }
+
+    .pulse {
+        animation: pulse 1.5s infinite;
+    }
+
+    @keyframes pulse {
+        0%   { color: #ff8c00; }
+        50%  { color: #ffd9a3; }
+        100% { color: #ff8c00; }
+    }
+</style>
+</head>
+
+<body>
+<div class="container">
+
+    <div class="row">
+        <div class="value" id="distance">0.00 km</div>
+        <div class="label">Distanz</div>
+    </div>
+
+    <div class="row">
+        <div class="value" id="speed">0.0 km/h</div>
+        <div class="label">Geschwindigkeit</div>
+    </div>
+
+    <div class="row">
+        <div class="value" id="avgspeed">0.0 km/h</div>
+        <div class="label">Ø Geschwindigkeit</div>
+    </div>
+
+    <div class="row">
+        <div class="value" id="power">0 W</div>
+        <div class="label">Power</div>
+    </div>
+
+    <div class="row">
+        <div class="value" id="avgpower">0 W</div>
+        <div class="label">Ø Power</div>
+    </div>
+
+    <div class="row">
+        <div class="value pulse" id="hr">0 bpm</div>
+        <div class="label">Herzfrequenz</div>
+    </div>
+
+    <div class="row">
+        <div class="value" id="cad">0 rpm</div>
+        <div class="label">Kadenz</div>
+    </div>
+
+    <div class="row-small">
+        <div class="value-small" id="hrzone">HF-Zone: Z1 (Regeneration)</div>
+        <div class="label">Trainingszone Herzfrequenz</div>
+    </div>
+
+    <div class="row-small">
+        <div class="value-small" id="pzone">Power-Zone: Z1 (Regeneration)</div>
+        <div class="label">Trainingszone Power</div>
+    </div>
+
+</div>
+
+<script>
+    // ---------------------------------------------------------
+    // KONFIGURATION – bitte an dich anpassen
+    // ---------------------------------------------------------
+
+    // JSON-Datei von GoldenCheetah (gleicher Ordner wie dieses HTML)
+    const jsonFileName = "gc_live.json";
+
+    // Deine geschätzte maximale Herzfrequenz (für HF-Zonen)
+    const MAX_HR = 204;  // <- anpassen!
+
+    // Deine FTP in Watt (für Power-Zonen)
+    const FTP = 220;     // <- anpassen!
+
+    // ---------------------------------------------------------
+    // Hilfsfunktionen
+    // ---------------------------------------------------------
+
+    function clamp(value, min, max) {
+        return Math.max(min, Math.min(max, value));
+    }
+
+    function applyNeonGlow(element, factor) {
+        // factor: 0.0 = kein Glow, 1.0 = maximaler Glow
+        if (!element) return;
+
+        factor = clamp(factor, 0, 1);
+
+        if (factor <= 0) {
+            element.style.textShadow = "none";
+            return;
+        }
+
+        const blur = 10 + 20 * factor;            // 10–30px
+        const alpha = 0.3 + 0.7 * factor;         // 0.3–1.0
+
+        element.style.textShadow =
+            `0 0 ${blur}px rgba(255, 140, 0, ${alpha}), 
+             0 0 ${blur * 1.5}px rgba(255, 140, 0, ${alpha * 0.8})`;
+    }
+
+    function getHrZone(hr) {
+        if (!hr || hr <= 0 || !MAX_HR) {
+            return { text: "HF-Zone: –", color: "#ffffff" };
+        }
+
+        const pct = (hr / MAX_HR) * 100;
+
+        if (pct < 60) {
+            return { text: "HF-Zone: Z1 (Regeneration)", color: "#00e060" };
+        } else if (pct < 70) {
+            return { text: "HF-Zone: Z2 (GA1)", color: "#66ff66" };
+        } else if (pct < 80) {
+            return { text: "HF-Zone: Z3 (GA2)", color: "#ffd000" };
+        } else if (pct < 90) {
+            return { text: "HF-Zone: Z4 (Schwelle)", color: "#ff8c00" };
+        } else {
+            return { text: "HF-Zone: Z5 (VO2max+)", color: "#ff4040" };
+        }
+    }
+
+    function getPowerZone(power) {
+        if (!power || power <= 0 || !FTP) {
+            return { text: "Power-Zone: –", color: "#ffffff" };
+        }
+
+        const pct = (power / FTP) * 100;
+
+        if (pct < 55) {
+            return { text: "Power-Zone: Z1 (Aktive Erholung)", color: "#00e060" };
+        } else if (pct < 75) {
+            return { text: "Power-Zone: Z2 (GA1)", color: "#66ff66" };
+        } else if (pct < 90) {
+            return { text: "Power-Zone: Z3 (GA2)", color: "#ffd000" };
+        } else if (pct < 105) {
+            return { text: "Power-Zone: Z4 (Schwelle)", color: "#ff8c00" };
+        } else if (pct < 120) {
+            return { text: "Power-Zone: Z5 (VO2max)", color: "#ff4040" };
+        } else {
+            return { text: "Power-Zone: Z6+ (Anaerob)", color: "#ff00ff" };
+        }
+    }
+
+    async function loadData() {
+        try {
+            const response = await fetch(jsonFileName + "?t=" + new Date().getTime());
+            if (!response.ok) {
+                throw new Error("HTTP " + response.status);
+            }
+            const data = await response.json();
+
+            // DOM-Elemente
+            const distElem   = document.getElementById("distance");
+            const speedElem  = document.getElementById("speed");
+            const avgSpElem  = document.getElementById("avgspeed");
+            const powElem    = document.getElementById("power");
+            const avgPowElem = document.getElementById("avgpower");
+            const hrElem     = document.getElementById("hr");
+            const cadElem    = document.getElementById("cad");
+            const hrZoneElem = document.getElementById("hrzone");
+            const pZoneElem  = document.getElementById("pzone");
+
+            // Daten aus JSON (mit Fallbacks)
+            const distance   = typeof data.distance   === "number" ? data.distance   : 0;
+            const speed      = typeof data.speed      === "number" ? data.speed      : 0;
+            const avgspeed   = typeof data.avgspeed   === "number" ? data.avgspeed   : 0;
+            const power      = typeof data.power      === "number" ? data.power      : 0;
+            const avgpower   = typeof data.avgpower   === "number" ? data.avgpower   : 0;
+            const hr         = typeof data.heartrate  === "number" ? data.heartrate  : 0;
+            const cadence    = typeof data.cadence    === "number" ? data.cadence    : 0;
+
+            // Anzeige updaten
+            if (distElem)   distElem.innerText   = distance.toFixed(2) + " km";
+            if (speedElem)  speedElem.innerText  = speed.toFixed(1)    + " km/h";
+            if (avgSpElem)  avgSpElem.innerText  = avgspeed.toFixed(1) + " km/h";
+            if (powElem)    powElem.innerText    = Math.round(power)   + " W";
+            if (avgPowElem) avgPowElem.innerText = Math.round(avgpower)+ " W";
+            if (hrElem)     hrElem.innerText     = Math.round(hr)      + " bpm";
+            if (cadElem)    cadElem.innerText    = Math.round(cadence) + " rpm";
+
+            // Neon-Glow:
+            // Power: 0 W -> 0, >=1000 W -> 1.0
+            const powerFactor = clamp(power / 1000, 0, 1);
+            applyNeonGlow(powElem, powerFactor);
+
+            // Speed: <=20 km/h -> 0, >=40 km/h -> 1.0
+            const speedFactor = clamp((speed - 20) / 20, 0, 1);
+            applyNeonGlow(speedElem, speedFactor);
+
+            // Trainingszonen
+            const hrZone = getHrZone(hr);
+            const pZone  = getPowerZone(power);
+
+            if (hrZoneElem) {
+                hrZoneElem.innerText = hrZone.text;
+                hrZoneElem.style.color = hrZone.color;
+            }
+
+            if (pZoneElem) {
+                pZoneElem.innerText = pZone.text;
+                pZoneElem.style.color = pZone.color;
+            }
+
+        } catch (e) {
+            console.log("Fehler beim Laden der Daten:", e);
+        }
+    }
+
+    // Alle 500ms Daten aus der JSON ziehen
+    setInterval(loadData, 500);
+</script>
+</body>
+</html>
