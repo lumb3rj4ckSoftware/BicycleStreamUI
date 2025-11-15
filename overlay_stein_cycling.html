@@ -7,22 +7,84 @@
     body {
         margin: 0;
         font-family: Arial, sans-serif;
-        background: rgba(0,0,0,0);
+        background: transparent !important;
         color: #ff8c00;
     }
 
     .container {
         padding: 10px 20px;
         border-radius: 12px;
-        background: rgba(0,0,0,0.35);
-        backdrop-filter: blur(6px);
-        width: 360px;
+        background: rgba(30,30,30,0.75);
+        width: 420px;
+    }
+
+    .top-metrics {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        column-gap: 16px;
+        row-gap: 10px;
+        margin-bottom: 12px;
+    }
+
+    .metric {
+        margin-bottom: 4px;
     }
 
     .value {
-        font-size: 32px;
+        font-size: 28px;
         font-weight: bold;
         color: #FFA533;
+        display: flex;
+        align-items: baseline;
+        gap: 6px;
+    }
+
+    .icon {
+        font-size: 28px;
+        display: inline-block;
+    }
+
+    /* Animierte Icons */
+    .icon-distance {
+        animation: floatDistance 3s ease-in-out infinite;
+    }
+
+    .icon-avgspeed {
+        animation: rocketSpeed 1.2s ease-in-out infinite;
+    }
+
+    .icon-avgpower {
+        animation: powerPulse 1.6s ease-in-out infinite;
+        transform-origin: center center;
+    }
+
+    @keyframes floatDistance {
+        0%   { transform: translateY(0); }
+        50%  { transform: translateY(-2px); }
+        100% { transform: translateY(0); }
+    }
+
+    @keyframes rocketSpeed {
+        0%   { transform: translateX(0); }
+        50%  { transform: translateX(3px); }
+        100% { transform: translateX(0); }
+    }
+
+    @keyframes powerPulse {
+        0% {
+            transform: scale(1);
+            text-shadow: none;
+        }
+        50% {
+            transform: scale(1.15);
+            text-shadow:
+                0 0 6px rgba(255,140,0,0.9),
+                0 0 12px rgba(255,140,0,0.7);
+        }
+        100% {
+            transform: scale(1);
+            text-shadow: none;
+        }
     }
 
     .value-small {
@@ -31,120 +93,378 @@
     }
 
     .label {
-        font-size: 13px;
+        font-size: 12px;
         text-transform: uppercase;
         color: #dddddd;
-        margin-top: -8px;
     }
 
     .row {
-        margin-bottom: 14px;
+        margin-bottom: 10px;
     }
 
     .row-small {
-        margin-bottom: 8px;
+        margin-bottom: 6px;
     }
 
+    /* HF-Blitz: Animation, Dauer via JS */
     .pulse {
-        animation: pulse 1.5s infinite;
+        animation-name: pulseDynamic;
+        animation-iteration-count: infinite;
+        animation-timing-function: ease-in-out;
     }
 
-    @keyframes pulse {
+    @keyframes pulseDynamic {
         0%   { color: #ff8c00; }
         50%  { color: #ffd9a3; }
         100% { color: #ff8c00; }
     }
+
+    .gauges {
+        display: flex;
+        justify-content: space-between;
+        margin-top: 8px;
+        margin-bottom: 15px;
+        gap: 10px;
+    }
+
+    .gauge-wrapper {
+        width: 190px;
+        height: 120px;
+        position: relative;
+    }
+
+    .gauge-label {
+        position: absolute;
+        bottom: -10;
+        width: 100%;
+        text-align: center;
+        font-size: 13px;
+        text-transform: uppercase;
+        color: #dddddd;
+    }
+
+    .gauge-value {
+        position: absolute;
+        bottom: 16px;
+        width: 100%;
+        text-align: center;
+        font-size: 18px;
+        font-weight: bold;
+        color: #FFA533;
+    }
+
+    /* HF-Zonen-Visualisierung ---------------------------------------- */
+    .hf-visual {
+        margin-top: 4px;
+        margin-bottom: 8px;
+    }
+
+    .hf-zone-thresholds {
+        position: relative;
+        height: 14px;
+        margin-top: 2px;
+        font-size: 10px;
+        color: #cccccc;
+    }
+
+    .hf-threshold {
+        position: absolute;
+        top: 0;
+        transform: translateX(-50%);
+        white-space: nowrap;
+        text-align: center;
+        min-width: 20px;
+    }
+
+    .hf-zone-bar {
+        display: grid;
+        grid-template-columns: repeat(5, 1fr);
+        column-gap: 2px;
+        margin-top: 4px;
+    }
+
+    .hf-zone-cell {
+        font-size: 11px;
+        text-align: center;
+        padding: 2px 0 3px 0;
+        color: #111;
+        border-radius: 4px;
+        font-weight: 600;
+    }
+
+    .hf-zone-z1 { background-color: #00e060; }
+    .hf-zone-z2 { background-color: #66ff66; }
+    .hf-zone-z3 { background-color: #ffd000; }
+    .hf-zone-z4 { background-color: #ff8c00; }
+    .hf-zone-z5 { background-color: #ff4040; }
+
+    .hf-zone-slider-wrapper {
+        position: relative;
+        height: 16px;
+        margin-top: 3px;
+    }
+
+    .hf-zone-slider-line {
+        position: absolute;
+        left: 0;
+        right: 0;
+        top: 7px;
+        height: 2px;
+        background: rgba(255,255,255,0.35);
+        border-radius: 999px;
+    }
+
+    .hf-zone-slider-pointer {
+        position: absolute;
+        top: 0;
+        width: 14px;
+        height: 14px;
+        border-radius: 50%;
+        background: #ffffff;
+        box-shadow: 0 0 8px rgba(255,140,0,0.9);
+        transform: translateX(-50%);
+    }
+
+    /* Power-Zonen-Visualisierung ------------------------------------- */
+    .p-visual {
+        margin-top: 4px;
+        margin-bottom: 4px;
+    }
+
+    .p-zone-thresholds {
+        position: relative;
+        height: 14px;
+        margin-top: 2px;
+        font-size: 10px;
+        color: #cccccc;
+    }
+
+    .p-threshold {
+        position: absolute;
+        top: 0;
+        transform: translateX(-50%);
+        white-space: nowrap;
+        text-align: center;
+        min-width: 24px;
+    }
+
+    .p-zone-bar {
+        display: grid;
+        grid-template-columns: repeat(6, 1fr);
+        column-gap: 2px;
+        margin-top: 4px;
+    }
+
+    .p-zone-cell {
+        font-size: 11px;
+        text-align: center;
+        padding: 2px 0 3px 0;
+        color: #111;
+        border-radius: 4px;
+        font-weight: 600;
+    }
+
+    .p-zone-z1 { background-color: #00e060; } /* Z1 */
+    .p-zone-z2 { background-color: #66ff66; } /* Z2 */
+    .p-zone-z3 { background-color: #ffd000; } /* Z3 */
+    .p-zone-z4 { background-color: #ff8c00; } /* Z4 */
+    .p-zone-z5 { background-color: #ff4040; } /* Z5 */
+    .p-zone-z6 { background-color: #ff00ff; } /* Z6+ */
+
+    .p-zone-slider-wrapper {
+        position: relative;
+        height: 16px;
+        margin-top: 3px;
+    }
+
+    .p-zone-slider-line {
+        position: absolute;
+        left: 0;
+        right: 0;
+        top: 7px;
+        height: 2px;
+        background: rgba(255,255,255,0.35);
+        border-radius: 999px;
+    }
+
+    .p-zone-slider-pointer {
+        position: absolute;
+        top: 0;
+        width: 14px;
+        height: 14px;
+        border-radius: 50%;
+        background: #ffffff;
+        box-shadow: 0 0 8px rgba(255,140,0,0.9);
+        transform: translateX(-50%);
+    }
 </style>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 </head>
 
 <body>
 <div class="container">
 
-    <div class="row">
-        <div class="value" id="distance">0.00 km</div>
-        <div class="label">Distanz</div>
+    <!-- Obere Werte mit Icons -->
+    <div class="top-metrics">
+        <div class="metric">
+            <div class="value">
+                <span class="icon icon-distance">🛣️</span>
+                <span id="distance">0.00 km</span>
+            </div>
+            <div class="label">Distanz</div>
+        </div>
+
+        <div class="metric">
+            <div class="value">
+                <span class="icon">🚴‍♂️</span>
+                <span id="speed">0.0 km/h</span>
+            </div>
+            <div class="label">Geschwindigkeit</div>
+        </div>
+
+        <div class="metric">
+            <div class="value">
+                <span class="icon icon-avgspeed">🚀</span>
+                <span id="avgspeed">0.0 km/h</span>
+            </div>
+            <div class="label">Ø Geschwindigkeit</div>
+        </div>
+
+        <div class="metric">
+            <div class="value">
+                <span class="icon">⚡</span>
+                <span id="power">0 W</span>
+            </div>
+            <div class="label">Power</div>
+        </div>
+
+        <div class="metric">
+            <div class="value">
+                <span class="icon icon-avgpower">💥</span>
+                <span id="avgpower">0 W</span>
+            </div>
+            <div class="label">Ø Power</div>
+        </div>
+
+        <div class="metric">
+            <div class="value pulse">
+                <span class="icon">❤️</span>
+                <span id="hr">0 bpm</span>
+            </div>
+            <div class="label">Herzfrequenz</div>
+        </div>
+
+        <div class="metric">
+            <div class="value">
+                <span class="icon">🔁</span>
+                <span id="cad">0 rpm</span>
+            </div>
+            <div class="label">Kadenz</div>
+        </div>
     </div>
 
-    <div class="row">
-        <div class="value" id="speed">0.0 km/h</div>
-        <div class="label">Geschwindigkeit</div>
-    </div>
-
-    <div class="row">
-        <div class="value" id="avgspeed">0.0 km/h</div>
-        <div class="label">Ø Geschwindigkeit</div>
-    </div>
-
-    <div class="row">
-        <div class="value" id="power">0 W</div>
-        <div class="label">Power</div>
-    </div>
-
-    <div class="row">
-        <div class="value" id="avgpower">0 W</div>
-        <div class="label">Ø Power</div>
-    </div>
-
-    <div class="row">
-        <div class="value pulse" id="hr">0 bpm</div>
-        <div class="label">Herzfrequenz</div>
-    </div>
-
-    <div class="row">
-        <div class="value" id="cad">0 rpm</div>
-        <div class="label">Kadenz</div>
-    </div>
-
+    <!-- HF-Zonen Text -->
     <div class="row-small">
         <div class="value-small" id="hrzone">HF-Zone: Z1 (Regeneration)</div>
         <div class="label">Trainingszone Herzfrequenz</div>
     </div>
 
+    <!-- HF-Visualisierung -->
+    <div class="hf-visual">
+        <div class="hf-zone-thresholds">
+            <div class="hf-threshold" id="hrThr60"></div>
+            <div class="hf-threshold" id="hrThr70"></div>
+            <div class="hf-threshold" id="hrThr80"></div>
+            <div class="hf-threshold" id="hrThr90"></div>
+        </div>
+
+        <div class="hf-zone-bar">
+            <div class="hf-zone-cell hf-zone-z1">Z1</div>
+            <div class="hf-zone-cell hf-zone-z2">Z2</div>
+            <div class="hf-zone-cell hf-zone-z3">Z3</div>
+            <div class="hf-zone-cell hf-zone-z4">Z4</div>
+            <div class="hf-zone-cell hf-zone-z5">Z5</div>
+        </div>
+
+        <div class="hf-zone-slider-wrapper">
+            <div class="hf-zone-slider-line"></div>
+            <div class="hf-zone-slider-pointer" id="hrZonePointer"></div>
+        </div>
+    </div>
+
+    <!-- Powerzone Text -->
     <div class="row-small">
-        <div class="value-small" id="pzone">Power-Zone: Z1 (Regeneration)</div>
+        <div class="value-small" id="pzone">Power-Zone: Z1 (Aktive Erholung)</div>
         <div class="label">Trainingszone Power</div>
+    </div>
+
+    <!-- Power-Visualisierung -->
+    <div class="p-visual">
+        <!-- Zonengrenzen in Watt -->
+        <div class="p-zone-thresholds">
+            <div class="p-threshold" id="pThr55"></div>
+            <div class="p-threshold" id="pThr75"></div>
+            <div class="p-threshold" id="pThr90"></div>
+            <div class="p-threshold" id="pThr105"></div>
+            <div class="p-threshold" id="pThr120"></div>
+        </div>
+
+        <div class="p-zone-bar">
+            <div class="p-zone-cell p-zone-z1">Z1</div>
+            <div class="p-zone-cell p-zone-z2">Z2</div>
+            <div class="p-zone-cell p-zone-z3">Z3</div>
+            <div class="p-zone-cell p-zone-z4">Z4</div>
+            <div class="p-zone-cell p-zone-z5">Z5</div>
+            <div class="p-zone-cell p-zone-z6">Z6</div>
+        </div>
+
+        <div class="p-zone-slider-wrapper">
+            <div class="p-zone-slider-line"></div>
+            <div class="p-zone-slider-pointer" id="pZonePointer"></div>
+        </div>
+    </div>
+
+    <!-- Tachos -->
+    <div class="gauges">
+        <div class="gauge-wrapper">
+            <canvas id="speedGauge"></canvas>
+            <div class="gauge-value" id="speedGaugeValue">0.0 km/h</div>
+            <div class="gauge-label">Speed Tacho</div>
+        </div>
+        <div class="gauge-wrapper">
+            <canvas id="powerGauge"></canvas>
+            <div class="gauge-value" id="powerGaugeValue">0 W</div>
+            <div class="gauge-label">Power Tacho</div>
+        </div>
     </div>
 
 </div>
 
 <script>
-    // ---------------------------------------------------------
-    // KONFIGURATION – bitte an dich anpassen
-    // ---------------------------------------------------------
-
-    // JSON-Datei von GoldenCheetah (gleicher Ordner wie dieses HTML)
     const jsonFileName = "gc_live.json";
 
-    // Deine geschätzte maximale Herzfrequenz (für HF-Zonen)
-    const MAX_HR = 204;  // <- anpassen!
+    const MAX_HR = 204;  // HFmax (anpassen)
+    const FTP    = 220;  // FTP in Watt (anpassen)
 
-    // Deine FTP in Watt (für Power-Zonen)
-    const FTP = 220;     // <- anpassen!
-
-    // ---------------------------------------------------------
-    // Hilfsfunktionen
-    // ---------------------------------------------------------
+    const SPEED_MAX = 60;    // km/h
+    const POWER_MAX = 1000;  // Watt
 
     function clamp(value, min, max) {
         return Math.max(min, Math.min(max, value));
     }
 
     function applyNeonGlow(element, factor) {
-        // factor: 0.0 = kein Glow, 1.0 = maximaler Glow
         if (!element) return;
-
         factor = clamp(factor, 0, 1);
-
         if (factor <= 0) {
             element.style.textShadow = "none";
             return;
         }
-
-        const blur = 10 + 20 * factor;            // 10–30px
-        const alpha = 0.3 + 0.7 * factor;         // 0.3–1.0
+        const blur  = 10 + 20 * factor;
+        const alpha = 0.3 + 0.7 * factor;
 
         element.style.textShadow =
-            `0 0 ${blur}px rgba(255, 140, 0, ${alpha}), 
+            `0 0 ${blur}px rgba(255, 140, 0, ${alpha}),
              0 0 ${blur * 1.5}px rgba(255, 140, 0, ${alpha * 0.8})`;
     }
 
@@ -152,7 +472,6 @@
         if (!hr || hr <= 0 || !MAX_HR) {
             return { text: "HF-Zone: –", color: "#ffffff" };
         }
-
         const pct = (hr / MAX_HR) * 100;
 
         if (pct < 60) {
@@ -166,6 +485,62 @@
         } else {
             return { text: "HF-Zone: Z5 (VO2max+)", color: "#ff4040" };
         }
+    }
+
+    function getHrSliderLeftPercent(hr) {
+        if (!hr || hr <= 0 || !MAX_HR) {
+            return 0;
+        }
+
+        let pct = (hr / MAX_HR) * 100;
+        pct = clamp(pct, 0, 100);
+
+        let zoneIndex, alphaInZone;
+        if (pct < 60) {
+            zoneIndex   = 0;
+            alphaInZone = pct / 60;
+        } else if (pct < 70) {
+            zoneIndex   = 1;
+            alphaInZone = (pct - 60) / 10;
+        } else if (pct < 80) {
+            zoneIndex   = 2;
+            alphaInZone = (pct - 70) / 10;
+        } else if (pct < 90) {
+            zoneIndex   = 3;
+            alphaInZone = (pct - 80) / 10;
+        } else {
+            zoneIndex   = 4;
+            alphaInZone = (pct - 90) / 10;
+        }
+
+        const segmentWidth = 100 / 5;
+        return (zoneIndex + alphaInZone) * segmentWidth;
+    }
+
+    function updateHeartBlink(hr) {
+        const hrElem = document.getElementById("hr");
+        if (!hrElem) return;
+
+        const wrapper = hrElem.parentElement; // <div class="value pulse">
+        if (!wrapper) return;
+
+        if (!hr || hr <= 40) {
+            wrapper.style.animationDuration = "2.0s";
+            return;
+        }
+
+        // Herzfrequenz-gesteuerte Blinkdauer:
+        // 50 bpm → ~1.5s
+        // 100 bpm → ~0.9s
+        // 150 bpm → ~0.6s
+        // 180+ bpm → ~0.45s
+        const minDur = 0.45;
+        const maxDur = 2.0;
+
+        let duration = maxDur - (hr / 200) * (maxDur - minDur);
+        duration = Math.max(minDur, Math.min(maxDur, duration));
+
+        wrapper.style.animationDuration = duration.toFixed(2) + "s";
     }
 
     function getPowerZone(power) {
@@ -190,15 +565,216 @@
         }
     }
 
+    // Slider-Position für Power (6 gleich breite visuelle Zonen)
+    function getPowerSliderLeftPercent(power) {
+        if (!power || power <= 0 || !FTP) {
+            return 0;
+        }
+
+        let pct = (power / FTP) * 100;
+        pct = clamp(pct, 0, 180); // nicht „wegfliegen“
+
+        let zoneIndex, alphaInZone;
+        if (pct < 55) {
+            zoneIndex   = 0;                     // Z1
+            alphaInZone = pct / 55;
+        } else if (pct < 75) {
+            zoneIndex   = 1;                     // Z2
+            alphaInZone = (pct - 55) / 20;
+        } else if (pct < 90) {
+            zoneIndex   = 2;                     // Z3
+            alphaInZone = (pct - 75) / 15;
+        } else if (pct < 105) {
+            zoneIndex   = 3;                     // Z4
+            alphaInZone = (pct - 90) / 15;
+        } else if (pct < 120) {
+            zoneIndex   = 4;                     // Z5
+            alphaInZone = (pct - 105) / 15;
+        } else {
+            zoneIndex   = 5;                     // Z6+
+            alphaInZone = (pct - 120) / 60;      // 120–180 % in Z6
+        }
+
+        alphaInZone = clamp(alphaInZone, 0, 1);
+        const segmentWidth = 100 / 6;
+        return (zoneIndex + alphaInZone) * segmentWidth;
+    }
+
+    // HF-Zonengrenzen in bpm
+    function setHrThresholdLabels() {
+        if (!MAX_HR) return;
+
+        const thr60 = document.getElementById("hrThr60");
+        const thr70 = document.getElementById("hrThr70");
+        const thr80 = document.getElementById("hrThr80");
+        const thr90 = document.getElementById("hrThr90");
+
+        if (!thr60 || !thr70 || !thr80 || !thr90) return;
+
+        const h60 = Math.round(MAX_HR * 0.60);
+        const h70 = Math.round(MAX_HR * 0.70);
+        const h80 = Math.round(MAX_HR * 0.80);
+        const h90 = Math.round(MAX_HR * 0.90);
+
+        thr60.textContent = h60 + " bpm";
+        thr70.textContent = h70 + " bpm";
+        thr80.textContent = h80 + " bpm";
+        thr90.textContent = h90 + " bpm";
+
+        thr60.style.left = "20%";
+        thr70.style.left = "40%";
+        thr80.style.left = "60%";
+        thr90.style.left = "80%";
+    }
+
+    // Power-Zonengrenzen in Watt (55/75/90/105/120 % FTP)
+    function setPowerThresholdLabels() {
+        if (!FTP) return;
+
+        const t55  = document.getElementById("pThr55");
+        const t75  = document.getElementById("pThr75");
+        const t90  = document.getElementById("pThr90");
+        const t105 = document.getElementById("pThr105");
+        const t120 = document.getElementById("pThr120");
+
+        if (!t55 || !t75 || !t90 || !t105 || !t120) return;
+
+        const p55  = Math.round(FTP * 0.55);
+        const p75  = Math.round(FTP * 0.75);
+        const p90  = Math.round(FTP * 0.90);
+        const p105 = Math.round(FTP * 1.05);
+        const p120 = Math.round(FTP * 1.20);
+
+        t55.textContent  = p55  + " W";
+        t75.textContent  = p75  + " W";
+        t90.textContent  = p90  + " W";
+        t105.textContent = p105 + " W";
+        t120.textContent = p120 + " W";
+
+        // 6 Zonen => 5 Grenzen -> 1/6, 2/6, 3/6, 4/6, 5/6
+        t55.style.left  = (100/6 * 1) + "%";  // ~16.7 %
+        t75.style.left  = (100/6 * 2) + "%";  // ~33.3 %
+        t90.style.left  = (100/6 * 3) + "%";  // 50 %
+        t105.style.left = (100/6 * 4) + "%";  // ~66.7 %
+        t120.style.left = (100/6 * 5) + "%";  // ~83.3 %
+    }
+
+    const gaugeNeedlePlugin = {
+        id: 'gaugeNeedle',
+        afterDatasetDraw(chart, args, pluginOptions) {
+            const { ctx } = chart;
+            const meta = chart.getDatasetMeta(0);
+            const arc = meta.data[0];
+            if (!arc) return;
+
+            const centerX = arc.x;
+            const centerY = arc.y;
+            const radius  = arc.outerRadius * (pluginOptions.radiusPercentage || 0.9);
+            const angle   = arc.endAngle;
+
+            const targetX = centerX + radius * Math.cos(angle);
+            const targetY = centerY + radius * Math.sin(angle);
+
+            ctx.save();
+            ctx.lineWidth   = pluginOptions.width || 2;
+            ctx.strokeStyle = pluginOptions.color || '#ffffff';
+            ctx.fillStyle   = pluginOptions.color || '#ffffff';
+
+            ctx.beginPath();
+            ctx.moveTo(centerX, centerY);
+            ctx.lineTo(targetX, targetY);
+            ctx.stroke();
+
+            ctx.beginPath();
+            ctx.arc(centerX, centerY, 4, 0, 2 * Math.PI);
+            ctx.fill();
+
+            ctx.restore();
+        }
+    };
+
+    Chart.register(gaugeNeedlePlugin);
+
+    let speedGaugeChart = null;
+    let powerGaugeChart = null;
+
+    function initGauges() {
+        const speedCtx = document.getElementById('speedGauge').getContext('2d');
+        const powerCtx = document.getElementById('powerGauge').getContext('2d');
+
+        speedGaugeChart = new Chart(speedCtx, {
+            type: 'doughnut',
+            data: {
+                labels: ['Speed', 'Rest'],
+                datasets: [{
+                    data: [0, SPEED_MAX],
+                    backgroundColor: [
+                        'rgba(255, 140, 0, 0.85)',
+                        'rgba(80, 80, 80, 0.4)'
+                    ],
+                    borderWidth: 0,
+                    circumference: 180,
+                    rotation: -90,
+                    cutout: '70%'
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                rotation: -90,
+                circumference: 180,
+                plugins: {
+                    legend: { display: false },
+                    tooltip: { enabled: false },
+                    gaugeNeedle: {
+                        color: 'rgba(255,255,255,0.9)',
+                        width: 2,
+                        radiusPercentage: 0.9
+                    }
+                }
+            }
+        });
+
+        powerGaugeChart = new Chart(powerCtx, {
+            type: 'doughnut',
+            data: {
+                labels: ['Power', 'Rest'],
+                datasets: [{
+                    data: [0, POWER_MAX],
+                    backgroundColor: [
+                        'rgba(255, 140, 0, 0.85)',
+                        'rgba(80, 80, 80, 0.4)'
+                    ],
+                    borderWidth: 0,
+                    circumference: 180,
+                    rotation: -90,
+                    cutout: '70%'
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                rotation: -90,
+                circumference: 180,
+                plugins: {
+                    legend: { display: false },
+                    tooltip: { enabled: false },
+                    gaugeNeedle: {
+                        color: 'rgba(255,255,255,0.9)',
+                        width: 2,
+                        radiusPercentage: 0.9
+                    }
+                }
+            }
+        });
+    }
+
     async function loadData() {
         try {
             const response = await fetch(jsonFileName + "?t=" + new Date().getTime());
-            if (!response.ok) {
-                throw new Error("HTTP " + response.status);
-            }
+            if (!response.ok) throw new Error("HTTP " + response.status);
             const data = await response.json();
 
-            // DOM-Elemente
             const distElem   = document.getElementById("distance");
             const speedElem  = document.getElementById("speed");
             const avgSpElem  = document.getElementById("avgspeed");
@@ -209,7 +785,11 @@
             const hrZoneElem = document.getElementById("hrzone");
             const pZoneElem  = document.getElementById("pzone");
 
-            // Daten aus JSON (mit Fallbacks)
+            const speedGaugeValueElem = document.getElementById("speedGaugeValue");
+            const powerGaugeValueElem = document.getElementById("powerGaugeValue");
+            const hrZonePointerElem   = document.getElementById("hrZonePointer");
+            const pZonePointerElem    = document.getElementById("pZonePointer");
+
             const distance   = typeof data.distance   === "number" ? data.distance   : 0;
             const speed      = typeof data.speed      === "number" ? data.speed      : 0;
             const avgspeed   = typeof data.avgspeed   === "number" ? data.avgspeed   : 0;
@@ -218,7 +798,6 @@
             const hr         = typeof data.heartrate  === "number" ? data.heartrate  : 0;
             const cadence    = typeof data.cadence    === "number" ? data.cadence    : 0;
 
-            // Anzeige updaten
             if (distElem)   distElem.innerText   = distance.toFixed(2) + " km";
             if (speedElem)  speedElem.innerText  = speed.toFixed(1)    + " km/h";
             if (avgSpElem)  avgSpElem.innerText  = avgspeed.toFixed(1) + " km/h";
@@ -227,16 +806,12 @@
             if (hrElem)     hrElem.innerText     = Math.round(hr)      + " bpm";
             if (cadElem)    cadElem.innerText    = Math.round(cadence) + " rpm";
 
-            // Neon-Glow:
-            // Power: 0 W -> 0, >=1000 W -> 1.0
-            const powerFactor = clamp(power / 1000, 0, 1);
-            applyNeonGlow(powElem, powerFactor);
+            if (speedGaugeValueElem) speedGaugeValueElem.innerText = speed.toFixed(1) + " km/h";
+            if (powerGaugeValueElem) powerGaugeValueElem.innerText = Math.round(power) + " W";
 
-            // Speed: <=20 km/h -> 0, >=40 km/h -> 1.0
-            const speedFactor = clamp((speed - 20) / 20, 0, 1);
-            applyNeonGlow(speedElem, speedFactor);
+            // HF-Blinkgeschwindigkeit anpassen
+            updateHeartBlink(hr);
 
-            // Trainingszonen
             const hrZone = getHrZone(hr);
             const pZone  = getPowerZone(power);
 
@@ -250,13 +825,48 @@
                 pZoneElem.style.color = pZone.color;
             }
 
+            if (hrZonePointerElem) {
+                const left = getHrSliderLeftPercent(hr);
+                hrZonePointerElem.style.left = left + "%";
+            }
+
+            if (pZonePointerElem) {
+                const leftP = getPowerSliderLeftPercent(power);
+                pZonePointerElem.style.left = leftP + "%";
+            }
+
+            const powerFactor = clamp(power / POWER_MAX, 0, 1);
+            applyNeonGlow(powElem, powerFactor);
+
+            const speedFactor = clamp((speed - 20) / 20, 0, 1);
+            applyNeonGlow(speedElem, speedFactor);
+
+            if (speedGaugeChart) {
+                const sVal = clamp(speed, 0, SPEED_MAX);
+                speedGaugeChart.data.datasets[0].data[0] = sVal;
+                speedGaugeChart.data.datasets[0].data[1] = SPEED_MAX - sVal;
+                speedGaugeChart.update('none');
+            }
+
+            if (powerGaugeChart) {
+                const pVal = clamp(power, 0, POWER_MAX);
+                powerGaugeChart.data.datasets[0].data[0] = pVal;
+                powerGaugeChart.data.datasets[0].data[1] = POWER_MAX - pVal;
+                powerGaugeChart.update('none');
+            }
+
         } catch (e) {
             console.log("Fehler beim Laden der Daten:", e);
         }
     }
 
-    // Alle 500ms Daten aus der JSON ziehen
-    setInterval(loadData, 500);
+    window.addEventListener('load', () => {
+        initGauges();
+        setHrThresholdLabels();
+        setPowerThresholdLabels();
+        loadData();
+        setInterval(loadData, 500);
+    });
 </script>
 </body>
 </html>

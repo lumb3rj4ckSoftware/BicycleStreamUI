@@ -1,0 +1,63 @@
+# === Benutzerdefinierte Ignorierungen ===
+
+
+# Ignoriere alle virtuellen Umgebungen unabhängig vom Ort
+.venv/*
+
+# === Allgemeine Python-Ignorierungen ===
+
+# Bytecode-Dateien
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Jupyter Notebooks Checkpoints
+.ipynb_checkpoints/
+
+# Distribution / Packaging
+build/
+dist/
+*.egg-info/
+
+# Test- und Coverage-Dateien
+.coverage
+.tox/
+.nox/
+.cache/
+pytest_cache/
+htmlcov/
+
+# IDEs und Editoren
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# Systemdateien
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Temporäre Dateien
+*.tmp
+*.swp
+*.bak
+*.old
+
+# Backup-Dateien
+*~
+
+# Umgebungsvariablen / Secrets (falls genutzt)
+.env
+.env.*
+
+# MacOS Finder
+*.DS_Store
+
+# Windows Explorer
+desktop.ini
+
+# PyInstaller
+*.spec
