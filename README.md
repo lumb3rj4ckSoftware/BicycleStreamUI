@@ -12,8 +12,15 @@ Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 .venv\Scripts\activate
 pip install openant
 ```
+
+## Testen
 ```
 python bridge.py --mode test --output gc_live.json --interval 0.5
+```
+
+## Normal laufen lassen
+```
+python bridge.py --mode ant --output gc_live.json --interval 0.5
 ```
 
 ### In dem HTML anpassen (optional)
