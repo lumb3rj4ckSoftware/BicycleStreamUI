@@ -43,6 +43,7 @@ class Metrics:
     avgpower: float   # W (Durchschnitt)
     heartrate: float  # bpm
     cadence: float    # rpm
+    timestamp: float  # Unix-Timestamp (Sekunden seit Epoch)
 
 
 def atomic_write_json(path: str, obj) -> None:
@@ -81,6 +82,61 @@ def atomic_write_json(path: str, obj) -> None:
         )
     except Exception as e:
         print(f"\n[bridge.py] Fehler beim Schreiben von {path}: {e}", file=sys.stderr)
+
+
+# ---------------------------------------------------------------------------
+# Konsolen-Ausgabe synchronisieren: Dist-Zeile immer unten halten
+# ---------------------------------------------------------------------------
+
+stdout_lock = threading.Lock()
+_last_status_line = ""
+
+
+def _build_status_line(metrics: Metrics) -> str:
+    return (
+        f"Dist: {metrics.distance:6.2f} km | "
+        f"v: {metrics.speed:5.1f} km/h (Ø {metrics.avgspeed:5.1f}) | "
+        f"P: {metrics.power:5.1f} W (Ø {metrics.avgpower:5.0f}) | "
+        f"HR: {metrics.heartrate:5.1f} bpm | "
+        f"CAD: {metrics.cadence:5.1f} rpm"
+    )
+
+
+def print_status_line(metrics: Metrics) -> None:
+    """
+    Zeichnet die Dist/Speed/Power/HR/CAD-Zeile als letzte Zeile im Terminal.
+    Vor der Statuszeile wird bewusst eine Leerzeile erzeugt.
+    """
+    global _last_status_line
+    line = _build_status_line(metrics)
+    with stdout_lock:
+        _last_status_line = line
+
+        # Eine Zeile runter + aktuelle Zeile löschen + neue Statuszeile
+        sys.stdout.write("\r\x1b[2K")          # aktuelle Zeile löschen
+        sys.stdout.write("\n")                # Leerzeile erzeugen
+        sys.stdout.write("\r\x1b[2K" + line)  # Statuszeile schreiben
+        sys.stdout.flush()
+
+
+def log_ant_line(line: str) -> None:
+    """
+    Schreibt einen ANT-Log *über* der Statuszeile.
+    Die Statuszeile bleibt unten stehen und wird nach dem Log neu gezeichnet.
+    """
+    with stdout_lock:
+        # aktuelle Statuszeile löschen
+        sys.stdout.write("\r\x1b[2K")
+
+        # Log ausgeben
+        sys.stdout.write(f"[ANT] {line}\n")
+
+        # Leerzeile + Statuszeile neu visualisieren
+        if _last_status_line:
+            sys.stdout.write("\n\r\x1b[2K" + _last_status_line)
+
+        sys.stdout.flush()
+
 
 
 # ---------------------------------------------------------------------------
@@ -165,6 +221,7 @@ class TestSimulator:
             avgpower=avgpower,
             heartrate=self.hr,
             cadence=self.cad,
+            timestamp=now,
         )
 
 
@@ -180,17 +237,88 @@ def run_test_mode(args):
         while True:
             metrics = simulator.step()
             atomic_write_json(args.output, dataclasses.asdict(metrics))
-            sys.stdout.write(
-                f"\rDist: {metrics.distance:6.2f} km | "
-                f"v: {metrics.speed:5.1f} km/h (Ø {metrics.avgspeed:5.1f}) | "
-                f"P: {metrics.power:5.1f} W (Ø {metrics.avgpower:5.0f}) | "
-                f"HR: {metrics.heartrate:5.1f} bpm | "
-                f"CAD: {metrics.cadence:5.1f} rpm"
-            )
-            sys.stdout.flush()
+            print_status_line(metrics)
             time.sleep(args.interval)
     except KeyboardInterrupt:
         print("\n[bridge.py] Test-Modus beendet.")
+
+
+# ---------------------------------------------------------------------------
+# Helper: vorhandene Session aus JSON wieder aufgreifen (ANT)
+# ---------------------------------------------------------------------------
+
+def load_previous_session(json_path: str):
+    """
+    Versucht, eine bestehende gc_live.json einzulesen und –
+    wenn der Timestamp nicht älter als 30 Minuten ist –
+    Distanz + Energie + Startzeit für eine Fortsetzung zu rekonstruieren.
+
+    Rückgabe:
+      dict mit keys: distance_km, energy_j, start_time
+      oder None, wenn keine Fortsetzung stattfinden soll.
+    """
+    if not os.path.exists(json_path):
+        return None
+
+    try:
+        with open(json_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, json.JSONDecodeError) as e:
+        print(f"[bridge.py] Hinweis: Konnte bestehende JSON nicht lesen ({e}) – starte neue Session.", file=sys.stderr)
+        return None
+
+    if not isinstance(data, dict):
+        return None
+
+    ts = data.get("timestamp")
+    try:
+        ts = float(ts)
+    except (TypeError, ValueError):
+        # Kein brauchbarer Timestamp -> neue Session
+        return None
+
+    now = time.time()
+    age = now - ts
+    if age > 1800:  # > 30 Minuten
+        print("[bridge.py] Letzter Datensatz älter als 30 Minuten – starte neue Session.")
+        return None
+
+    # Distanz / Ø-Geschwindigkeit / Ø-Leistung aus der Datei holen
+    try:
+        distance = float(data.get("distance", 0.0))
+        avgspeed = float(data.get("avgspeed", 0.0))
+        avgpower = float(data.get("avgpower", 0.0))
+    except (TypeError, ValueError):
+        return None
+
+    if distance <= 0.0 or avgspeed <= 0.0:
+        # Keine sinnvollen Werte – neue Session
+        return None
+
+    # Fahrzeit aus Distanz + Durchschnittsgeschwindigkeit rekonstruieren
+    elapsed_hours = distance / avgspeed
+    elapsed_seconds = elapsed_hours * 3600.0
+    if elapsed_seconds <= 0:
+        return None
+
+    # Energie aus Ø-Leistung rekonstruieren
+    energy_j = max(0.0, avgpower) * elapsed_seconds
+
+    start_time = now - elapsed_seconds
+
+    print(
+        f"[bridge.py] Fortsetzung bestehender Session: "
+        f"Distanz={distance:.2f} km, "
+        f"Øv={avgspeed:.1f} km/h, "
+        f"ØP={avgpower:.0f} W, "
+        f"Alter des Datensatzes={age/60:.1f} min"
+    )
+
+    return {
+        "distance_km": distance,
+        "energy_j": energy_j,
+        "start_time": start_time,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -254,8 +382,8 @@ def run_ant_mode(args):
                 if not line:
                     continue
 
-                # Debug-Ausgabe (kannst du auf Wunsch rauswerfen)
-                print(f"\n[ANT] {line}")
+                # Debug-Ausgabe sauber über der Statuszeile
+                log_ant_line(line)
 
                 if line.startswith("<class 'usb.core.USBError'>"):
                     # nur Info, Zustand bleibt
@@ -298,10 +426,22 @@ def run_ant_mode(args):
     t.start()
 
     # Hauptschleife: nur Integrationslogik + JSON-Schreiben mit fixem Intervall
-    start_time = time.time()
-    last_time = start_time
-    distance_km = 0.0
-    energy_j = 0.0
+
+    # Versuche, bestehende Session zu laden (falls < 30 min alt)
+    previous = load_previous_session(json_path)
+
+    now = time.time()
+    if previous is not None:
+        start_time = previous["start_time"]
+        distance_km = previous["distance_km"]
+        energy_j = previous["energy_j"]
+        # last_time jetzt setzen; dt startet ab aktuellem Zeitpunkt
+        last_time = now
+    else:
+        start_time = now
+        last_time = now
+        distance_km = 0.0
+        energy_j = 0.0
 
     try:
         while True:
@@ -339,18 +479,11 @@ def run_ant_mode(args):
                 avgpower=avgpower,
                 heartrate=hr_bpm,
                 cadence=cad_rpm,
+                timestamp=now,
             )
 
             atomic_write_json(json_path, dataclasses.asdict(metrics))
-
-            sys.stdout.write(
-                f"\rDist: {metrics.distance:6.2f} km | "
-                f"v: {metrics.speed:5.1f} km/h (Ø {metrics.avgspeed:5.1f}) | "
-                f"P: {metrics.power:5.1f} W (Ø {metrics.avgpower:5.0f}) | "
-                f"HR: {metrics.heartrate:5.1f} bpm | "
-                f"CAD: {metrics.cadence:5.1f} rpm"
-            )
-            sys.stdout.flush()
+            print_status_line(metrics)
 
     except KeyboardInterrupt:
         print("\n[bridge.py] ANT-Modus beendet (CTRL+C).")
