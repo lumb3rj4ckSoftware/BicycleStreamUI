@@ -46,10 +46,41 @@ class Metrics:
 
 
 def atomic_write_json(path: str, obj) -> None:
+    """
+    Windows-freundlicher Schreibprozess:
+    - erst in path.tmp schreiben und fsyncen (nur Writer benutzt diese Datei)
+    - danach direkt in path schreiben
+    - PermissionError beim Schreiben von path abfangen, damit die Bridge weiterläuft
+    """
     tmp_path = f"{path}.tmp"
-    with open(tmp_path, "w", encoding="utf-8") as f:
-        json.dump(obj, f)
-    os.replace(tmp_path, path)
+
+    # 1) In die TMP-Datei schreiben und sicher flushen
+    try:
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            json.dump(obj, f)
+            f.flush()
+            try:
+                os.fsync(f.fileno())
+            except (OSError, AttributeError):
+                # fsync ist unter Windows nicht immer nötig/verfügbar, ignorieren
+                pass
+    except Exception as e:
+        # Wenn schon das Schreiben der TMP-Datei schiefgeht, loggen und abbrechen
+        print(f"\n[bridge.py] Fehler beim Schreiben von {tmp_path}: {e}", file=sys.stderr)
+        return
+
+    # 2) Hauptdatei schreiben (kann vom Browser kurzzeitig gelockt sein)
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(obj, f)
+    except PermissionError:
+        # Overlay/Browsersource hält evtl. kurz einen Lock – einfach diesen Zyklus skippen
+        print(
+            f"\n[bridge.py] Warnung: PermissionError beim Schreiben von {path} – Zyklus übersprungen.",
+            file=sys.stderr,
+        )
+    except Exception as e:
+        print(f"\n[bridge.py] Fehler beim Schreiben von {path}: {e}", file=sys.stderr)
 
 
 # ---------------------------------------------------------------------------

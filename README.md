@@ -1,5 +1,21 @@
 ## Kurz, was du noch tun musst
 
+[ANT] [11:36:55] Device fitness_equipment_34628 broadcast standard_power data: PowerData(instantaneous_power=140, average_power=137, left_power=-1, right_power=-1, torque=0.03, angular_velocity=2.28, cadence=77)
+Traceback (most recent call last):
+  File "E:\Arbeit\Twitch-Streaming\BicycleStreamUI\bridge.py", line 378, in <module>
+    main()
+  File "E:\Arbeit\Twitch-Streaming\BicycleStreamUI\bridge.py", line 371, in main
+    run_ant_mode(args)
+  File "E:\Arbeit\Twitch-Streaming\BicycleStreamUI\bridge.py", line 313, in run_ant_mode
+    atomic_write_json(json_path, dataclasses.asdict(metrics))
+  File "E:\Arbeit\Twitch-Streaming\BicycleStreamUI\bridge.py", line 52, in atomic_write_json
+    os.replace(tmp_path, path)
+PermissionError: [WinError 5] Zugriff verweigert: 'gc_live.json.tmp' -> 'gc_live.json'
+
+============================================================
+[ENDE] BicycleStreamUI wurde beendet.
+Dr├╝cke eine beliebige Taste zum Schlie├ƒen ...
+
 # Vorbereiten
 ```
 python -m venv .venv
