@@ -1,7 +1,9 @@
-import openant, pkgutil, sys
-import openant.devices
+"""Small local diagnostic retained for compatibility with the original repository."""
+from pathlib import Path
+import json
 
-print("OpenANT Version:", getattr(openant, "__version__", "unknown"))
-print("\nModule Tree:")
-for m in pkgutil.walk_packages(openant.__path__, openant.__name__ + "."):
-    print(" -", m.name)
+p = Path(__file__).with_name("gc_live.json")
+if not p.exists():
+    print("gc_live.json fehlt. Starte bridge.py --mode test.")
+else:
+    print(json.dumps(json.loads(p.read_text(encoding="utf-8")), indent=2))

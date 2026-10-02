@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "total_km": 0.0,
+  "daily_km": {},
+  "session_id": null,
+  "last_live_distance": null,
+  "last_live_timestamp": null,
+  "triggered_events": [],
+  "last_plan_status": "on_track",
+  "manual_adjustments": []
+}

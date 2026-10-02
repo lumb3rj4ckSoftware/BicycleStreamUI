@@ -1,0 +1,97 @@
+{
+  "boss": {
+    "active_chatter_window_seconds": 300,
+    "interval_km": 20,
+    "major_duration_seconds": 270,
+    "major_hp_base": 100,
+    "major_hp_max": 3000,
+    "major_hp_min": 100,
+    "major_hp_per_chatter": 25,
+    "major_interval_km": 100,
+    "medipack_seconds": 10,
+    "rider_bonus_seconds": 10,
+    "rider_charge_30": 0.55,
+    "rider_charge_35": 1.0,
+    "rider_charge_40": 1.75,
+    "rider_charge_required": 100.0,
+    "rider_major_cap_seconds": 120,
+    "rider_small_cap_seconds": 60,
+    "small_duration_seconds": 150,
+    "small_hp_base": 35,
+    "small_hp_max": 1200,
+    "small_hp_min": 35,
+    "small_hp_per_chatter": 12
+  },
+  "challenge": {
+    "end_date": "2026-10-31",
+    "major_milestone_interval_km": 100,
+    "max_live_delta_km": 2.0,
+    "milestone_interval_km": 10,
+    "plan_tolerance_km": 1.0,
+    "reset_threshold_km": 0.05,
+    "start_date": "2026-10-01",
+    "target_km": 1000.0,
+    "title": "1000 km im Oktober"
+  },
+  "features": {
+    "betting": false,
+    "boss_battles": true,
+    "central_event_overlay": true,
+    "challenge_progressbar": true,
+    "chat_commands": true,
+    "classic_dashboard": true,
+    "medipaks": true,
+    "milestone_10": true,
+    "milestone_100": true,
+    "milestone_dedications": false,
+    "particles": true,
+    "raid_challenges": true,
+    "rider_assist": true,
+    "speed_heat": true,
+    "sub_challenges": true,
+    "trainer_control": false,
+    "twitch_integration": true
+  },
+  "heat": {
+    "base_particles": 10,
+    "level1_kmh": 30.0,
+    "level1_particles": 24,
+    "level2_kmh": 35.0,
+    "level2_particles": 42,
+    "level3_kmh": 40.0,
+    "level3_particles": 70
+  },
+  "physical_challenges": {
+    "climb_10_grade_percent": 1.0,
+    "climb_10_seconds": 90,
+    "climb_15_grade_percent": 2.0,
+    "climb_15_seconds": 90,
+    "higher_multiple_strategy": "highest_once_then_fives",
+    "raid_cap_enabled": false,
+    "raid_cap_seconds": 300,
+    "sprint_5_seconds": 30
+  },
+  "server": {
+    "bridge_json": "gc_live.json",
+    "host": "127.0.0.1",
+    "log_backup_count": 5,
+    "log_max_bytes": 2097152,
+    "port": 5050,
+    "telemetry_interval_seconds": 0.5
+  },
+  "trainer": {
+    "command_timeout_seconds": 4.0,
+    "device_name_hint": "KICKR CORE 2",
+    "helper_command": "",
+    "neutral_grade_percent": 0.0
+  },
+  "twitch": {
+    "client_id": "w48xhefd9ddp8pjl6xv77u9pb4re02",
+    "command_cooldown_seconds": 8,
+    "medipack_auto_create": true,
+    "medipack_reward_cost": 500,
+    "medipack_reward_prompt": "Bossfight-Perk: +10 Sekunden. Pro Zuschauer und Bosskampf maximal einmal wirksam.",
+    "medipack_reward_title": "Medipak",
+    "third_party_emotes": true
+  }
+}

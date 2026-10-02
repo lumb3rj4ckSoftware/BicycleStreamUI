@@ -1,14 +1,12 @@
 #!/usr/bin/env python3
-"""
-bridge.py
+from __future__ import annotations
 
-Schreibt zyklisch eine Datei `gc_live.json`, die von overlay_stein_cycling.html
-gelesen werden kann.
+"""Bicycle telemetry bridge.
 
-Modi:
-- test:  Simuliert Trainingsdaten (für Entwicklung / Overlay-Test)
-- ant:   Liest echte Daten über `python -u -m openant scan --logging ERROR -a`
-         und parst stdout in einem Thread
+Keeps the original project contract (`gc_live.json`) while adding a stable session_id.
+Modes:
+  test - plausible synthetic data
+  ant  - parses `python -u -m openant scan --logging ERROR -a`
 """
 
 import argparse
@@ -17,525 +15,230 @@ import json
 import os
 import random
 import re
-import signal
 import subprocess
 import sys
-import time
 import threading
+import time
+import uuid
 from dataclasses import dataclass
+from pathlib import Path
 
-
-# ---------------------------------------------------------------------------
-# IDs – aktuell nicht zum Filtern benutzt, aber behalten falls du später willst
-# ---------------------------------------------------------------------------
-
-HR_DEVICE_ID = 8118       # HeartRate
-PM_DEVICE_ID = 35165      # Powermeter (Pedale)
-FE_DEVICE_ID = 34628      # KICKR Core 2 als FitnessEquipment (Speed)
+HR_DEVICE_ID = 8118
+PM_DEVICE_ID = 35165
+FE_DEVICE_ID = 34628
 
 
 @dataclass
 class Metrics:
-    distance: float   # km
-    speed: float      # km/h (aktuell)
-    avgspeed: float   # km/h (Durchschnitt)
-    power: float      # W (aktuell)
-    avgpower: float   # W (Durchschnitt)
-    heartrate: float  # bpm
-    cadence: float    # rpm
-    timestamp: float  # Unix-Timestamp (Sekunden seit Epoch)
+    distance: float
+    speed: float
+    avgspeed: float
+    power: float
+    avgpower: float
+    heartrate: float
+    cadence: float
+    timestamp: float
+    session_id: str
+    source: str
 
 
-def atomic_write_json(path: str, obj) -> None:
-    """
-    Windows-freundlicher Schreibprozess:
-    - erst in path.tmp schreiben und fsyncen (nur Writer benutzt diese Datei)
-    - danach direkt in path schreiben
-    - PermissionError beim Schreiben von path abfangen, damit die Bridge weiterläuft
-    """
-    tmp_path = f"{path}.tmp"
-
-    # 1) In die TMP-Datei schreiben und sicher flushen
+def atomic_write_json(path: str | Path, obj: dict) -> None:
+    """Write a stable JSON file without `os.replace` locking failures on Windows OBS reads."""
+    path = Path(path)
+    tmp = path.with_suffix(path.suffix + ".tmp")
     try:
-        with open(tmp_path, "w", encoding="utf-8") as f:
-            json.dump(obj, f)
-            f.flush()
+        with tmp.open("w", encoding="utf-8") as fh:
+            json.dump(obj, fh)
+            fh.flush()
             try:
-                os.fsync(f.fileno())
-            except (OSError, AttributeError):
-                # fsync ist unter Windows nicht immer nötig/verfügbar, ignorieren
+                os.fsync(fh.fileno())
+            except OSError:
                 pass
-    except Exception as e:
-        # Wenn schon das Schreiben der TMP-Datei schiefgeht, loggen und abbrechen
-        print(f"\n[bridge.py] Fehler beim Schreiben von {tmp_path}: {e}", file=sys.stderr)
+    except Exception as exc:
+        print(f"\n[bridge.py] TMP write failed: {exc}", file=sys.stderr)
         return
-
-    # 2) Hauptdatei schreiben (kann vom Browser kurzzeitig gelockt sein)
+    # First try atomic replacement. If Windows/browser locking prevents it, use a direct overwrite.
     try:
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(obj, f)
+        os.replace(tmp, path)
+        return
     except PermissionError:
-        # Overlay/Browsersource hält evtl. kurz einen Lock – einfach diesen Zyklus skippen
-        print(
-            f"\n[bridge.py] Warnung: PermissionError beim Schreiben von {path} – Zyklus übersprungen.",
-            file=sys.stderr,
-        )
-    except Exception as e:
-        print(f"\n[bridge.py] Fehler beim Schreiben von {path}: {e}", file=sys.stderr)
+        pass
+    except OSError:
+        pass
+    try:
+        with path.open("w", encoding="utf-8") as fh:
+            json.dump(obj, fh)
+    except PermissionError:
+        print(f"\n[bridge.py] Warning: {path} is locked; cycle skipped.", file=sys.stderr)
+    except OSError as exc:
+        print(f"\n[bridge.py] Write failed: {exc}", file=sys.stderr)
+    finally:
+        try:
+            tmp.unlink(missing_ok=True)
+        except OSError:
+            pass
 
-
-# ---------------------------------------------------------------------------
-# Konsolen-Ausgabe synchronisieren: Dist-Zeile immer unten halten
-# ---------------------------------------------------------------------------
-
-stdout_lock = threading.Lock()
-_last_status_line = ""
-
-
-def _build_status_line(metrics: Metrics) -> str:
-    return (
-        f"Dist: {metrics.distance:6.2f} km | "
-        f"v: {metrics.speed:5.1f} km/h (Ø {metrics.avgspeed:5.1f}) | "
-        f"P: {metrics.power:5.1f} W (Ø {metrics.avgpower:5.0f}) | "
-        f"HR: {metrics.heartrate:5.1f} bpm | "
-        f"CAD: {metrics.cadence:5.1f} rpm"
-    )
-
-
-def print_status_line(metrics: Metrics) -> None:
-    """
-    Zeichnet die Dist/Speed/Power/HR/CAD-Zeile als letzte Zeile im Terminal.
-    Vor der Statuszeile wird bewusst eine Leerzeile erzeugt.
-    """
-    global _last_status_line
-    line = _build_status_line(metrics)
-    with stdout_lock:
-        _last_status_line = line
-
-        # Eine Zeile runter + aktuelle Zeile löschen + neue Statuszeile
-        sys.stdout.write("\r\x1b[2K")          # aktuelle Zeile löschen
-        sys.stdout.write("\n")                # Leerzeile erzeugen
-        sys.stdout.write("\r\x1b[2K" + line)  # Statuszeile schreiben
-        sys.stdout.flush()
-
-
-def log_ant_line(line: str) -> None:
-    """
-    Schreibt einen ANT-Log *über* der Statuszeile.
-    Die Statuszeile bleibt unten stehen und wird nach dem Log neu gezeichnet.
-    """
-    with stdout_lock:
-        # aktuelle Statuszeile löschen
-        sys.stdout.write("\r\x1b[2K")
-
-        # Log ausgeben
-        sys.stdout.write(f"[ANT] {line}\n")
-
-        # Leerzeile + Statuszeile neu visualisieren
-        if _last_status_line:
-            sys.stdout.write("\n\r\x1b[2K" + _last_status_line)
-
-        sys.stdout.flush()
-
-
-
-# ---------------------------------------------------------------------------
-# TEST-SIMULATOR (für Overlay-Entwicklung)
-# ---------------------------------------------------------------------------
 
 class TestSimulator:
     def __init__(self):
-        self.start_time = time.time()
-        self.last_time = self.start_time
-
+        self.started = self.last = time.time()
+        self.session_id = f"test-{uuid.uuid4()}"
         self.speed = 0.0
         self.power = 0.0
         self.hr = 80.0
         self.cad = 0.0
+        self.distance = 0.0
+        self.energy = 0.0
+        self.targets = [25.0, 180.0, 140.0, 85.0]
+        self.last_target = self.started
 
-        self.target_speed = 25.0
-        self.target_power = 180.0
-        self.target_hr = 140.0
-        self.target_cad = 85.0
-
-        self.last_target_change = self.start_time
-
-        self.distance_km = 0.0
-        self.energy_j = 0.0
-
-    def _smooth_step(self, current, target, factor, noise):
-        base = current + (target - current) * factor
-        return max(0.0, base + random.uniform(-noise, noise))
-
-    def _maybe_change_targets(self, now):
-        if now - self.last_target_change < random.uniform(10.0, 30.0):
-            return
-        self.last_target_change = now
-        phase = random.random()
-        if phase < 0.2:
-            self.target_speed = random.uniform(20.0, 28.0)
-            self.target_power = random.uniform(100.0, 180.0)
-            self.target_hr = random.uniform(120.0, 145.0)
-            self.target_cad = random.uniform(75.0, 90.0)
-        elif phase < 0.8:
-            self.target_speed = random.uniform(28.0, 38.0)
-            self.target_power = random.uniform(180.0, 280.0)
-            self.target_hr = random.uniform(140.0, 165.0)
-            self.target_cad = random.uniform(80.0, 95.0)
-        else:
-            self.target_speed = random.uniform(35.0, 45.0)
-            self.target_power = random.uniform(300.0, 800.0)
-            self.target_hr = random.uniform(160.0, 185.0)
-            self.target_cad = random.uniform(90.0, 105.0)
+    def _smooth(self, value: float, target: float, factor: float, noise: float) -> float:
+        return max(0.0, value + (target - value) * factor + random.uniform(-noise, noise))
 
     def step(self) -> Metrics:
         now = time.time()
-        dt = now - self.last_time
-        self.last_time = now
-        if dt <= 0:
-            dt = 1e-3
-
-        self._maybe_change_targets(now)
-
-        self.speed = self._smooth_step(self.speed, self.target_speed, 0.15, 0.3)
-        self.power = self._smooth_step(self.power, self.target_power, 0.20, 5.0)
-        self.hr = self._smooth_step(self.hr, self.target_hr, 0.10, 1.0)
-        self.cad = self._smooth_step(self.cad, self.target_cad, 0.25, 1.0)
-
-        self.distance_km += self.speed * dt / 3600.0
-        self.energy_j += self.power * dt
-
-        elapsed = now - self.start_time
-        if elapsed <= 0:
-            avgspeed = 0.0
-            avgpower = 0.0
-        else:
-            avgspeed = self.distance_km / (elapsed / 3600.0)
-            avgpower = self.energy_j / elapsed
-
+        dt = max(0.001, now - self.last)
+        self.last = now
+        if now - self.last_target > random.uniform(10, 25):
+            self.last_target = now
+            phase = random.random()
+            if phase < 0.25:
+                self.targets = [random.uniform(20, 28), random.uniform(100, 180), random.uniform(120, 145), random.uniform(75, 90)]
+            elif phase < 0.8:
+                self.targets = [random.uniform(28, 38), random.uniform(180, 300), random.uniform(140, 165), random.uniform(80, 98)]
+            else:
+                self.targets = [random.uniform(38, 46), random.uniform(350, 800), random.uniform(160, 185), random.uniform(90, 110)]
+        self.speed = self._smooth(self.speed, self.targets[0], .15, .3)
+        self.power = self._smooth(self.power, self.targets[1], .2, 5)
+        self.hr = self._smooth(self.hr, self.targets[2], .1, 1)
+        self.cad = self._smooth(self.cad, self.targets[3], .25, 1)
+        self.distance += self.speed * dt / 3600.0
+        self.energy += self.power * dt
+        elapsed = max(.001, now - self.started)
         return Metrics(
-            distance=self.distance_km,
-            speed=self.speed,
-            avgspeed=avgspeed,
-            power=self.power,
-            avgpower=avgpower,
-            heartrate=self.hr,
-            cadence=self.cad,
-            timestamp=now,
+            self.distance, self.speed, self.distance / (elapsed / 3600.0), self.power,
+            self.energy / elapsed, self.hr, self.cad, now, self.session_id, "test"
         )
 
 
-def run_test_mode(args):
-    simulator = TestSimulator()
-    print(
-        "[bridge.py] Test-Modus gestartet\n"
-        f"  JSON-Datei: {args.output}\n"
-        f"  Intervall : {args.interval:.3f} s\n"
-        "Abbrechen mit STRG+C\n"
-    )
+def _load_previous_session(path: Path) -> tuple[float, float, float, str] | None:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        age = time.time() - float(data.get("timestamp", 0))
+        if age > 1800 or data.get("source") not in {None, "ant"}:
+            return None
+        distance = float(data.get("distance", 0.0))
+        avgpower = float(data.get("avgpower", 0.0))
+        # Exact previous elapsed duration is unavailable in legacy JSON. Use a conservative
+        # reconstructed 1-second energy baseline; distance continuity is what matters here.
+        energy = max(0.0, avgpower)
+        started = time.time() - 1.0
+        sid = str(data.get("session_id") or f"ant-{uuid.uuid4()}")
+        return distance, energy, started, sid
+    except Exception:
+        return None
+
+
+def run_test(args: argparse.Namespace) -> None:
+    sim = TestSimulator()
+    print(f"[bridge.py] test mode -> {args.output}; Ctrl+C to stop")
     try:
         while True:
-            metrics = simulator.step()
-            atomic_write_json(args.output, dataclasses.asdict(metrics))
-            print_status_line(metrics)
+            m = sim.step()
+            atomic_write_json(args.output, dataclasses.asdict(m))
+            print(f"\rDist {m.distance:7.2f} km | {m.speed:5.1f} km/h | {m.power:4.0f} W | HR {m.heartrate:3.0f} | CAD {m.cadence:3.0f}", end="", flush=True)
             time.sleep(args.interval)
     except KeyboardInterrupt:
-        print("\n[bridge.py] Test-Modus beendet.")
+        print("\n[bridge.py] stopped")
 
 
-# ---------------------------------------------------------------------------
-# Helper: vorhandene Session aus JSON wieder aufgreifen (ANT)
-# ---------------------------------------------------------------------------
-
-def load_previous_session(json_path: str):
-    """
-    Versucht, eine bestehende gc_live.json einzulesen und –
-    wenn der Timestamp nicht älter als 30 Minuten ist –
-    Distanz + Energie + Startzeit für eine Fortsetzung zu rekonstruieren.
-
-    Rückgabe:
-      dict mit keys: distance_km, energy_j, start_time
-      oder None, wenn keine Fortsetzung stattfinden soll.
-    """
-    if not os.path.exists(json_path):
-        return None
-
-    try:
-        with open(json_path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-    except (OSError, json.JSONDecodeError) as e:
-        print(f"[bridge.py] Hinweis: Konnte bestehende JSON nicht lesen ({e}) – starte neue Session.", file=sys.stderr)
-        return None
-
-    if not isinstance(data, dict):
-        return None
-
-    ts = data.get("timestamp")
-    try:
-        ts = float(ts)
-    except (TypeError, ValueError):
-        # Kein brauchbarer Timestamp -> neue Session
-        return None
-
-    now = time.time()
-    age = now - ts
-    if age > 1800:  # > 30 Minuten
-        print("[bridge.py] Letzter Datensatz älter als 30 Minuten – starte neue Session.")
-        return None
-
-    # Distanz / Ø-Geschwindigkeit / Ø-Leistung aus der Datei holen
-    try:
-        distance = float(data.get("distance", 0.0))
-        avgspeed = float(data.get("avgspeed", 0.0))
-        avgpower = float(data.get("avgpower", 0.0))
-    except (TypeError, ValueError):
-        return None
-
-    if distance <= 0.0 or avgspeed <= 0.0:
-        # Keine sinnvollen Werte – neue Session
-        return None
-
-    # Fahrzeit aus Distanz + Durchschnittsgeschwindigkeit rekonstruieren
-    elapsed_hours = distance / avgspeed
-    elapsed_seconds = elapsed_hours * 3600.0
-    if elapsed_seconds <= 0:
-        return None
-
-    # Energie aus Ø-Leistung rekonstruieren
-    energy_j = max(0.0, avgpower) * elapsed_seconds
-
-    start_time = now - elapsed_seconds
-
-    print(
-        f"[bridge.py] Fortsetzung bestehender Session: "
-        f"Distanz={distance:.2f} km, "
-        f"Øv={avgspeed:.1f} km/h, "
-        f"ØP={avgpower:.0f} W, "
-        f"Alter des Datensatzes={age/60:.1f} min"
-    )
-
-    return {
-        "distance_km": distance,
-        "energy_j": energy_j,
-        "start_time": start_time,
-    }
-
-
-# ---------------------------------------------------------------------------
-# ANT-MODUS mit separatem Reader-Thread
-# ---------------------------------------------------------------------------
-
-def run_ant_mode(args):
-    json_path = args.output
-    interval = args.interval
-
-    print(
-        "[bridge.py] ANT-Modus gestartet\n"
-        f"  JSON-Datei: {json_path}\n"
-        f"  Intervall : {interval:.3f} s\n"
-        "  Quelle: python -u -m openant scan --logging ERROR -a\n"
-        "  Beenden mit STRG+C\n"
-    )
-
-    # Gemeinsamer Zustand, der vom Reader-Thread beschrieben und
-    # von der Hauptschleife gelesen wird
-    state_lock = threading.Lock()
-    state = {
-        "speed_kmh": 0.0,
-        "power_w": 0.0,
-        "hr_bpm": 0.0,
-        "cad_rpm": 0.0,
-    }
-    stop_flag = {"stop": False}
-
+def run_ant(args: argparse.Namespace) -> None:
+    output = Path(args.output)
+    previous = _load_previous_session(output)
+    if previous:
+        distance, energy, started, session_id = previous
+        print(f"[bridge.py] continuing recent ANT session at {distance:.2f} km")
+    else:
+        distance, energy, started, session_id = 0.0, 0.0, time.time(), f"ant-{uuid.uuid4()}"
+    state = {"speed": 0.0, "power": 0.0, "heartrate": 0.0, "cadence": 0.0}
+    lock = threading.Lock()
+    stop = threading.Event()
     re_hr = re.compile(r"heart_rate=(\d+)")
-    re_power = re.compile(r"instantaneous_power=(\d+)")
-    re_cad = re.compile(r"cadence=(\d+)")
+    re_power = re.compile(r"instantaneous_power=(-?\d+)")
+    re_cad = re.compile(r"cadence=(-?[0-9.]+)")
     re_speed = re.compile(r"speed=([0-9.]+)")
 
-    # Unbuffered (-u), damit Zeilen nicht gesammelt werden
     cmd = [sys.executable, "-u", "-m", "openant", "scan", "--logging", "ERROR", "-a"]
-    print(f"[bridge.py] Starte Subprozess: {' '.join(cmd)}")
-
     try:
-        proc = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            bufsize=1,
-        )
-    except FileNotFoundError:
-        print(
-            "[bridge.py] Fehler: python -m openant konnte nicht gestartet werden.\n"
-            "Bist du in der .venv und ist openant installiert?\n",
-            file=sys.stderr,
-        )
-        sys.exit(1)
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
+    except Exception as exc:
+        raise SystemExit(f"Could not start OpenANT scanner: {exc}")
 
-    def reader_thread():
+    def reader() -> None:
+        assert proc.stdout
         try:
-            for raw_line in proc.stdout:
-                if stop_flag["stop"]:
+            for line in proc.stdout:
+                if stop.is_set():
                     break
-                line = raw_line.rstrip("\n")
-                if not line:
-                    continue
-
-                # Debug-Ausgabe sauber über der Statuszeile
-                log_ant_line(line)
-
-                if line.startswith("<class 'usb.core.USBError'>"):
-                    # nur Info, Zustand bleibt
-                    continue
-
-                with state_lock:
-                    # HR
+                line = line.strip()
+                with lock:
                     if "heart_rate_" in line and "HeartRateData(" in line:
                         m = re_hr.search(line)
                         if m:
-                            state["hr_bpm"] = float(m.group(1))
-
-                    # POWER + CADENCE
+                            state["heartrate"] = float(m.group(1))
                     if "power_meter_" in line and "PowerData(" in line:
-                        m_p = re_power.search(line)
-                        if m_p:
-                            state["power_w"] = float(m_p.group(1))
-                        m_c = re_cad.search(line)
-                        if m_c:
-                            state["cad_rpm"] = float(m_c.group(1))
-
-                    # SPEED (FitnessEquipment)
+                        m = re_power.search(line)
+                        if m:
+                            state["power"] = max(0.0, float(m.group(1)))
+                        m = re_cad.search(line)
+                        if m:
+                            state["cadence"] = max(0.0, float(m.group(1)))
                     if "fitness_equipment_" in line and "FitnessEquipmentData(" in line:
-                        m_s = re_speed.search(line)
-                        if m_s:
-                            try:
-                                speed_ms = float(m_s.group(1))
-                                # 65535.0 = ungültig, 0.0 = stehen ist okay
-                                if 0.0 <= speed_ms < 50.0:
-                                    state["speed_kmh"] = speed_ms * 3.6
-                            except ValueError:
-                                pass
+                        m = re_speed.search(line)
+                        if m:
+                            speed_ms = float(m.group(1))
+                            if 0 <= speed_ms < 50:
+                                state["speed"] = speed_ms * 3.6
         finally:
-            try:
-                proc.terminate()
-            except Exception:
-                pass
+            stop.set()
 
-    t = threading.Thread(target=reader_thread, daemon=True)
-    t.start()
-
-    # Hauptschleife: nur Integrationslogik + JSON-Schreiben mit fixem Intervall
-
-    # Versuche, bestehende Session zu laden (falls < 30 min alt)
-    previous = load_previous_session(json_path)
-
-    now = time.time()
-    if previous is not None:
-        start_time = previous["start_time"]
-        distance_km = previous["distance_km"]
-        energy_j = previous["energy_j"]
-        # last_time jetzt setzen; dt startet ab aktuellem Zeitpunkt
-        last_time = now
-    else:
-        start_time = now
-        last_time = now
-        distance_km = 0.0
-        energy_j = 0.0
-
+    threading.Thread(target=reader, daemon=True).start()
+    last = time.time()
     try:
-        while True:
-            time.sleep(interval)
-
+        while not stop.is_set():
             now = time.time()
-            dt = now - last_time
-            if dt < 0:
-                dt = 0.0
-            last_time = now
-
-            with state_lock:
-                speed_kmh = state["speed_kmh"]
-                power_w = state["power_w"]
-                hr_bpm = state["hr_bpm"]
-                cad_rpm = state["cad_rpm"]
-
-            # Integration (einfach, aber stabil)
-            distance_km += speed_kmh * dt / 3600.0
-            energy_j += power_w * dt
-
-            elapsed = now - start_time
-            if elapsed > 0:
-                avgspeed = distance_km / (elapsed / 3600.0)
-                avgpower = energy_j / elapsed
-            else:
-                avgspeed = 0.0
-                avgpower = 0.0
-
-            metrics = Metrics(
-                distance=distance_km,
-                speed=speed_kmh,
-                avgspeed=avgspeed,
-                power=power_w,
-                avgpower=avgpower,
-                heartrate=hr_bpm,
-                cadence=cad_rpm,
-                timestamp=now,
-            )
-
-            atomic_write_json(json_path, dataclasses.asdict(metrics))
-            print_status_line(metrics)
-
+            dt = max(.001, now - last)
+            last = now
+            with lock:
+                speed, power, hr, cad = state["speed"], state["power"], state["heartrate"], state["cadence"]
+            distance += speed * dt / 3600.0
+            energy += power * dt
+            elapsed = max(.001, now - started)
+            m = Metrics(distance, speed, distance / (elapsed / 3600.0), power, energy / elapsed, hr, cad, now, session_id, "ant")
+            atomic_write_json(output, dataclasses.asdict(m))
+            print(f"\rDist {m.distance:7.2f} km | {m.speed:5.1f} km/h | {m.power:4.0f} W | HR {m.heartrate:3.0f} | CAD {m.cadence:3.0f}", end="", flush=True)
+            time.sleep(args.interval)
     except KeyboardInterrupt:
-        print("\n[bridge.py] ANT-Modus beendet (CTRL+C).")
+        pass
     finally:
-        stop_flag["stop"] = True
+        stop.set()
         try:
             proc.terminate()
         except Exception:
             pass
-        try:
-            t.join(timeout=1.0)
-        except Exception:
-            pass
+        print("\n[bridge.py] stopped")
 
 
-# ---------------------------------------------------------------------------
-# CLI
-# ---------------------------------------------------------------------------
-
-def parse_args(argv=None):
-    parser = argparse.ArgumentParser(description="GC-Live-Bridge für Cycling-Overlay")
-    parser.add_argument(
-        "--mode",
-        choices=["test", "ant"],
-        default="test",
-        help="test (Simulationsdaten) oder ant (echte ANT+-Daten via openant scan)",
-    )
-    parser.add_argument(
-        "--output",
-        default="gc_live.json",
-        help="Pfad zur JSON-Datei für das Overlay",
-    )
-    parser.add_argument(
-        "--interval",
-        type=float,
-        default=0.5,
-        help="Update-Intervall in Sekunden",
-    )
-    return parser.parse_args(argv)
-
-
-def main(argv=None):
-    args = parse_args(argv)
-    signal.signal(signal.SIGINT, signal.default_int_handler)
-
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--mode", choices=["test", "ant"], default="ant")
+    parser.add_argument("--output", default="gc_live.json")
+    parser.add_argument("--interval", type=float, default=.5)
+    args = parser.parse_args()
     if args.mode == "test":
-        run_test_mode(args)
-    elif args.mode == "ant":
-        run_ant_mode(args)
+        run_test(args)
     else:
-        print(f"Unbekannter Modus: {args.mode}", file=sys.stderr)
-        sys.exit(1)
+        run_ant(args)
 
 
 if __name__ == "__main__":

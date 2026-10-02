@@ -6,5 +6,5 @@ if not exist ".venv\Scripts\python.exe" (
   pause
   exit /b 1
 )
-".venv\Scripts\python.exe" launcher.py --mode ant
+".venv\Scripts\python.exe" launcher.py --mode test
 endlocal
