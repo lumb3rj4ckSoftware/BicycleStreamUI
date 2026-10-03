@@ -14,6 +14,8 @@ from pydantic import BaseModel, Field
 
 from .config import PROJECT_ROOT
 from .runtime import StreamRuntime
+from .twitch import TwitchAuthError, error_detail
+import httpx
 
 load_dotenv(PROJECT_ROOT / ".env")
 
@@ -52,6 +54,14 @@ def create_app(runtime: StreamRuntime | None = None) -> FastAPI:
     async def event_overlay():
         return FileResponse(web_dir / "event-overlay.html")
 
+    @app.get("/sub-info-overlay")
+    async def sub_info_overlay():
+        return FileResponse(web_dir / "sub-info-overlay.html")
+
+    @app.get("/sub-info-compact-overlay")
+    async def sub_info_compact_overlay():
+        return FileResponse(web_dir / "sub-info-compact-overlay.html")
+
     @app.get("/dashboard")
     async def dashboard():
         return FileResponse(web_dir / "dashboard.html")
@@ -63,6 +73,10 @@ def create_app(runtime: StreamRuntime | None = None) -> FastAPI:
     @app.get("/api/state")
     async def state():
         return rt.overlay_state()
+
+    @app.get("/api/health")
+    async def health():
+        return {"ok": True, "twitch_starting": rt._twitch_preparing}
 
     @app.get("/api/events")
     async def events(since: int = 0):
@@ -80,6 +94,10 @@ def create_app(runtime: StreamRuntime | None = None) -> FastAPI:
     async def action(req: ActionRequest):
         try:
             return await rt.admin_action(req.action, req.payload)
+        except TwitchAuthError as exc:
+            raise HTTPException(status_code=401, detail=str(exc)) from exc
+        except httpx.RequestError as exc:
+            raise HTTPException(status_code=503, detail=error_detail(exc)) from exc
         except (ValueError, KeyError, TypeError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         except Exception as exc:
@@ -92,10 +110,11 @@ def create_app(runtime: StreamRuntime | None = None) -> FastAPI:
         last_seq = 0
         try:
             while True:
+                # Establish the fight identity before delivering its projectile events.
+                await websocket.send_json({"type": "state", "payload": rt.overlay_state()})
                 for ev in rt.events_since(last_seq):
                     await websocket.send_json({"type": "event", "payload": ev})
                     last_seq = max(last_seq, int(ev["seq"]))
-                await websocket.send_json({"type": "state", "payload": rt.overlay_state()})
                 await asyncio.sleep(0.25)
         except (WebSocketDisconnect, asyncio.CancelledError):
             return

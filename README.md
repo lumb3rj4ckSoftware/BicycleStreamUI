@@ -56,6 +56,7 @@ Der Bridge-Prozess erzeugt plausible Test-Telemetrie. **Im Test-Start ist die Ki
 | --- | --- | --- |
 | Challenge | `http://127.0.0.1:5050/challenge-overlay` | 1400×230, oben mittig; Breite 1200–1600 sinnvoll |
 | Event/Boss | `http://127.0.0.1:5050/event-overlay` | **1920×1080**, volle Szene, transparenter Hintergrund |
+| Sub-Info | `http://127.0.0.1:5050/sub-info-overlay` | **460×340**, transparente Browserquelle |
 | Dashboard | `http://127.0.0.1:5050/dashboard` | z. B. 620×740, frei platzierbar |
 | Admin | `http://127.0.0.1:5050/admin` | Nicht als Stream-Source; nur lokale Steuerung |
 
@@ -87,10 +88,10 @@ Widersprüchliche Aufgaben werden vom `PhysicalChallengeManager` serialisiert.
 - Major Boss: Default 100, 200, 300 … km, Standard 270 s und ersetzt dort den Small Boss.
 - Die Distanzmarken stehen als `boss.interval_km` (Default 20) und `boss.major_interval_km` (Default 100) in der Konfiguration; das Major-Intervall muss ein Vielfaches des kleinen Intervalls sein.
 - HP: Baseline + aktiver Chatter-Faktor (5-Minuten-Fenster), mit Min/Max.
-- Alle unterschiedlichen erkannten Emotes einer Chatnachricht werden als Projektile angezeigt (maximal 12 Bilder je Nachricht zur Begrenzung der OBS-Last). Eine Nachricht = ein Treffer; Nicht-Sub 1 Damage, Sub 2 Damage.
+- Alle erkannten Emote-Vorkommen einer Chatnachricht werden in ihrer Reihenfolge als Salve auf derselben Flugbahn angezeigt, auch Wiederholungen. Eine Nachricht = ein Treffer; Nicht-Sub 1 Damage, Sub 2 Damage.
 - Twitch-native Emotes werden aus strukturierten Chat-Fragments gelesen; 7TV/BTTV/FFZ laufen über einen fehlertoleranten Provider-Resolver.
 - Non-Sub: 1 Damage; Sub: 2 Damage und 2× Reward-Multiplier.
-- Alle gültigen Hits werden serverseitig gezählt; der Browser begrenzt nur gleichzeitig sichtbare Projektile auf 80.
+- Alle gültigen Hits werden serverseitig gezählt; der Browser zeigt bis zu 200 Projektile gleichzeitig; weitere werden zeitversetzt gestartet.
 - Medipak: max. 1 pro `user_id` und Fight; Default +10 s.
 - Rider Assist: ab 30 km/h Charge; höhere Rate bei 35 und 40+; Default-Cap +60 s Small / +120 s Big.
 - Sieg erzeugt pro Teilnehmer genau einen `reward_eligibility`-Datensatz; Niederlage erzeugt keinen Win-Reward.
@@ -245,3 +246,19 @@ BicycleStreamUI_TEST.bat  Windows-Teststart
 ## Update: 20 Monster und Chat im SIM-Modus
 
 Lies `UPDATE_MONSTER.md` für Installation, HP-Beispiele und den Testablauf.
+
+
+## Salven-, Bosszeiten- und Sub-Overlay-Update
+
+Aktuelle Anleitung und Prüfergebnisse: **UPDATE_SALVEN.md**.
+
+
+## Kompaktes Sub-Overlay und Finalboss-Abschluss
+
+Aktuelle Anleitung: **UPDATE_FINALE_KOMPAKT.md**. Zweites Sub-Overlay: `/sub-info-compact-overlay` (360 × 150). Abschlussfeuerwerk nach Sieg über den Ziel-Boss; Timer und Siegmeldung im Event-Overlay deutlich größer.
+
+
+Twitch-Anmeldung: Das Update V4 korrigiert die Behandlung ungültiger Tokens und Wiederholungen nach Netzwerkfehlern. Installation und Prüfergebnisse stehen in `UPDATE_TWITCH_AUTH_V4.md`.
+
+
+Update V5: Unabhängige Prozessüberwachung und Twitch-Anmeldung im Hintergrund; Installation und Diagnose in `UPDATE_STARTSTABILITAET_V5.md`. Die kompakte Sub-Übersicht verwendet die Zeilen der großen Übersicht mit Zeit rechts und Erklärung unter dem Namen. Empfohlene OBS-Größe: 460 × 170 Pixel.

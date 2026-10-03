@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/static/common.css"><title>Sub-Info Overlay</title>
+<link rel="stylesheet" href="/static/sub-info.css"></head><body>
+<div id="subCard" class="subCard"><div class="header"><div><div class="eyebrow">1000 KM IM OKTOBER</div><div class="title">SUBS → CHALLENGE</div></div><span id="mode" class="badge">GIFT SUBS</span></div>
+<div id="tier5" class="tier" style="--accent:#64ddff"><div class="number">5</div><div><div class="name">SPRINT</div><div class="detail">Mehr Tempo für Stein!</div></div><div id="time5" class="time">+30 s</div></div>
+<div id="tier10" class="tier" style="--accent:#b794ff"><div class="number">10</div><div><div id="name10" class="name">1 % STEIGUNG</div><div class="detail">Der Berg ruft.</div></div><div id="time10" class="time">90 s</div></div>
+<div id="tier15" class="tier" style="--accent:#ff9c66"><div class="number">15</div><div><div id="name15" class="name">2 % + STEHEND</div><div class="detail">Sprint im Stehen am Berg!</div></div><div id="time15" class="time">90 s</div></div>
+<div id="subFooter" class="footer">Pro Gift-Paket · Weitere 5er verlängern einen laufenden Sprint.</div></div>
+<script type="module">
+import{connect,qs}from'/static/common.js';
+let flashTier=0,flashUntil=0;
+function update(s){const c=s.sub_challenge_config||{},active=s.physical?.active;qs('#time5').textContent='+'+(c.sprint_5_seconds??30)+' s';qs('#time10').textContent=(c.climb_10_seconds??90)+' s';qs('#time15').textContent=(c.climb_15_seconds??90)+' s';qs('#name10').textContent=(c.climb_10_grade_percent??1)+' % STEIGUNG';qs('#name15').textContent=(c.climb_15_grade_percent??2)+' % + STEHEND';const enabled=s.features?.sub_challenges!==false;qs('#subCard').classList.toggle('disabled',!enabled);qs('#mode').textContent=s.simulation?'SIMULATION':enabled?'GIFT SUBS':'DEAKTIVIERT';const tier=enabled?(performance.now()<flashUntil?flashTier:active?.kind==='sprint'?5:active?.kind==='climb'?10:active?.kind==='standing_climb'?15:0):0;for(const n of [5,10,15])qs('#tier'+n).classList.toggle('active',tier===n);qs('#subFooter').textContent=enabled?'Pro Gift-Paket · Weitere 5er verlängern einen laufenden Sprint.':'Sub-Challenges sind aktuell ausgeschaltet.'}
+function event(e){if(e.created_at&&Date.now()/1000-e.created_at>5)return;const tiers={SUB_SPRINT:5,SUB_CLIMB_1:10,SUB_CLIMB_2_STANDING:15};if(tiers[e.type]){flashTier=tiers[e.type];flashUntil=performance.now()+4000}}
+connect(update,event);
+</script></body></html>

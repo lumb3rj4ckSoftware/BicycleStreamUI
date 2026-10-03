@@ -97,8 +97,8 @@ class ChallengeService:
             "remaining_km": plan["remaining_km"],
             "today_km": round(float(self.state.get("daily_km", {}).get(today.isoformat(), 0.0)), 3),
             "plan": plan,
-            "next_10_km": min(int(target), self._next_multiple(total, interval)) if total < target else int(target),
-            "next_100_km": min(int(target), self._next_multiple(total, major_interval)) if total < target else int(target),
+            "next_10_km": min(int(target), self._next_multiple(total, interval)) if total < target else self._next_multiple(total, interval),
+            "next_100_km": min(int(target), self._next_multiple(total, major_interval)) if total < target else self._next_multiple(total, major_interval),
             "major_markers": [x for x in range(major_interval, int(target) + 1, major_interval)],
             "start_date": c["start_date"],
             "end_date": c["end_date"],
@@ -192,16 +192,23 @@ class ChallengeService:
         boss_cfg = self.config.get("boss", {})
         boss_interval = int(boss_cfg.get("interval_km", 20))
         boss_major = int(boss_cfg.get("major_interval_km", 100))
-        for mark in self._crossed_marks(before, after, boss_interval, target):
+        for mark in self._crossed_marks(before, after, boss_interval, after):
             key = self._trigger_key("boss", mark)
             if key not in triggered:
                 triggered.add(key)
                 out.append({
                     "type": "BOSS_SPAWN",
                     "mark_km": mark,
-                    "boss_type": "major" if mark % boss_major == 0 else "small",
+                    "boss_type": "major" if mark % boss_major == 0 or abs(mark - target) < 1e-6 else "small",
                     "dedupe_key": key,
                 })
+
+        # The target always has a final boss, even if intervals do not divide it.
+        if before < target <= after:
+            key = self._trigger_key("boss", target)
+            if key not in triggered:
+                triggered.add(key)
+                out.append({"type": "BOSS_SPAWN", "mark_km": target, "boss_type": "major", "dedupe_key": key})
 
         state["triggered_events"] = sorted(triggered)
         current_status = self.plan(today)["status"]

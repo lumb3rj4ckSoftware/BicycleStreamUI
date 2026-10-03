@@ -12,14 +12,18 @@ Modes:
 import argparse
 import dataclasses
 import json
+import logging
+from logging.handlers import RotatingFileHandler
 import os
 import random
 import re
+import signal
 import subprocess
 import sys
 import threading
 import time
 import uuid
+from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -152,7 +156,7 @@ def run_test(args: argparse.Namespace) -> None:
         print("\n[bridge.py] stopped")
 
 
-def run_ant(args: argparse.Namespace) -> None:
+def run_ant(args: argparse.Namespace) -> int:
     output = Path(args.output)
     previous = _load_previous_session(output)
     if previous:
@@ -169,8 +173,21 @@ def run_ant(args: argparse.Namespace) -> None:
     re_speed = re.compile(r"speed=([0-9.]+)")
 
     cmd = [sys.executable, "-u", "-m", "openant", "scan", "--logging", "ERROR", "-a"]
+    log_path = output.parent / "data" / "ant-scanner.log"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    scanner_log = logging.getLogger("bicycle.ant-scanner")
+    scanner_log.setLevel(logging.INFO)
+    scanner_log.propagate = False
+    if not scanner_log.handlers:
+        handler = RotatingFileHandler(log_path, maxBytes=2_097_152, backupCount=3, encoding="utf-8")
+        handler.setFormatter(logging.Formatter("%(asctime)s %(message)s"))
+        scanner_log.addHandler(handler)
+    tail: deque[str] = deque(maxlen=20)
     try:
-        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
+        scanner_env = os.environ.copy()
+        scanner_env["PYTHONIOENCODING"] = "utf-8"
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+                                encoding="utf-8", errors="replace", bufsize=1, env=scanner_env)
     except Exception as exc:
         raise SystemExit(f"Could not start OpenANT scanner: {exc}")
 
@@ -181,6 +198,9 @@ def run_ant(args: argparse.Namespace) -> None:
                 if stop.is_set():
                     break
                 line = line.strip()
+                tail.append(line)
+                if not any(marker in line for marker in ("HeartRateData(", "PowerData(", "FitnessEquipmentData(")):
+                    scanner_log.info(line)
                 with lock:
                     if "heart_rate_" in line and "HeartRateData(" in line:
                         m = re_hr.search(line)
@@ -204,6 +224,7 @@ def run_ant(args: argparse.Namespace) -> None:
 
     threading.Thread(target=reader, daemon=True).start()
     last = time.time()
+    interrupted = False
     try:
         while not stop.is_set():
             now = time.time()
@@ -219,27 +240,45 @@ def run_ant(args: argparse.Namespace) -> None:
             print(f"\rDist {m.distance:7.2f} km | {m.speed:5.1f} km/h | {m.power:4.0f} W | HR {m.heartrate:3.0f} | CAD {m.cadence:3.0f}", end="", flush=True)
             time.sleep(args.interval)
     except KeyboardInterrupt:
-        pass
+        interrupted = True
     finally:
         stop.set()
         try:
-            proc.terminate()
-        except Exception:
-            pass
-        print("\n[bridge.py] stopped")
+            if proc.poll() is None:
+                proc.terminate()
+            proc.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=3)
+        if interrupted:
+            print("\n[bridge.py] bewusst gestoppt")
+        else:
+            print(f"\n[bridge.py] ANT-Scanner unerwartet beendet (Exit-Code {proc.returncode}).")
+            print(f"[bridge.py] Diagnose: {log_path}; Dongle/USB-Verbindung prüfen.")
+            for line in list(tail)[-8:]:
+                print(f"[ANT] {line}", file=sys.stderr)
+            scanner_log.error("Scanner beendet: Exit-Code %s", proc.returncode)
+    return 0 if interrupted else 1
 
 
-def main() -> None:
+def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--mode", choices=["test", "ant"], default="ant")
     parser.add_argument("--output", default="gc_live.json")
     parser.add_argument("--interval", type=float, default=.5)
     args = parser.parse_args()
+    def request_stop(_signum, _frame):
+        raise KeyboardInterrupt
+    for name in ("SIGTERM", "SIGBREAK"):
+        sig = getattr(signal, name, None)
+        if sig is not None:
+            signal.signal(sig, request_stop)
     if args.mode == "test":
         run_test(args)
+        return 0
     else:
-        run_ant(args)
+        return run_ant(args)
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

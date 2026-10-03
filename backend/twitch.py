@@ -29,6 +29,17 @@ REQUIRED_SCOPES = (
 )
 
 
+class TwitchAuthError(RuntimeError):
+    """The account must grant Twitch access again."""
+
+
+def error_detail(exc: Exception) -> str:
+    # httpx timeouts frequently have an empty str(); retain a useful diagnosis.
+    if isinstance(exc, httpx.TimeoutException):
+        return f"{type(exc).__name__}: Twitch antwortet nicht rechtzeitig. Verbindung wird erneut versucht."
+    return f"{type(exc).__name__}: {str(exc).strip() or 'Verbindungsfehler'}"
+
+
 class TwitchGateway:
     EVENTSUB_URL = "wss://eventsub.wss.twitch.tv/ws"
     HELIX = "https://api.twitch.tv/helix"
@@ -76,6 +87,9 @@ class TwitchGateway:
         self._seen_set: set[str] = set()
         self._device_flow: dict[str, Any] | None = None
         self._auth_lock = asyncio.Lock()
+        self._poll_lock = asyncio.Lock()
+        self._reauth_required = False
+        self._validation_pending = bool(self._auth.get("validation_pending", False))
 
     def _load_auth(self) -> dict[str, Any]:
         if not self.auth_path or not self.auth_path.exists():
@@ -101,6 +115,7 @@ class TwitchGateway:
             "scopes": list(self.scopes),
             "expires_at": self.expires_at,
             "updated_at": time.time(),
+            "validation_pending": self._validation_pending,
         }
         self.auth_path.parent.mkdir(parents=True, exist_ok=True)
         atomic_write_json(self.auth_path, payload)
@@ -125,10 +140,10 @@ class TwitchGateway:
         return [scope for scope in self.required_scopes if scope not in current]
 
     def configured(self) -> bool:
-        return bool(self.client_id and self.token and self.broadcaster_id and self.eventsub_user_id)
+        return bool(self.client_id and self.authenticated() and self.eventsub_user_id)
 
     def authenticated(self) -> bool:
-        return bool(self.token and self.broadcaster_id)
+        return bool(self.token and self.broadcaster_id and not self._reauth_required and not self._validation_pending)
 
     def status(self) -> dict[str, Any]:
         device = None
@@ -144,6 +159,9 @@ class TwitchGateway:
         return {
             "configured": self.configured(),
             "authenticated": self.authenticated(),
+            "has_token": bool(self.token),
+            "reauth_required": self._reauth_required,
+            "validation_pending": self._validation_pending,
             "connected": self.connected,
             "client_id": self.client_id,
             "broadcaster_id": self.broadcaster_id,
@@ -171,17 +189,24 @@ class TwitchGateway:
         if not self.token:
             self.last_error = "Kein Twitch Access Token vorhanden"
             return False
+        checked_token = self.token
         try:
-            r = await self._request("GET", self.OAUTH_VALIDATE, headers={"Authorization": f"OAuth {self.token}"}, timeout=6)
+            r = await self._request("GET", self.OAUTH_VALIDATE, headers={"Authorization": f"OAuth {checked_token}"}, timeout=15)
+            if checked_token != self.token:
+                return await self.validate_token(refresh_on_401=False)
             if r.status_code == 401 and refresh_on_401 and self.refresh_token:
-                if await self.refresh_access_token():
+                if await self.refresh_access_token(expected_token=checked_token):
                     return await self.validate_token(refresh_on_401=False)
             if r.status_code != 200:
+                if r.status_code == 401:
+                    self._reauth_required = True
+                    self.connected = False
                 self.last_error = f"OAuth validate: HTTP {r.status_code}: {r.text[:240]}"
                 return False
             body = r.json()
             token_client = str(body.get("client_id", ""))
             if token_client and token_client != self.client_id:
+                self._reauth_required = True
                 self.last_error = "OAuth Token gehört zu einer anderen Twitch Client-ID"
                 return False
             self.scopes = list(body.get("scopes") or [])
@@ -193,16 +218,20 @@ class TwitchGateway:
             self.expires_at = time.time() + expires_in if expires_in else self.expires_at
             missing = self.missing_scopes()
             self.last_error = f"Fehlende Twitch-Scopes: {', '.join(missing)}" if missing else ""
+            self._reauth_required = bool(missing)
+            self._validation_pending = False
             self._save_auth()
             return not missing
         except Exception as exc:
-            self.last_error = f"OAuth validate: {exc}"
+            self.last_error = f"OAuth validate: {error_detail(exc)}"
             return False
 
-    async def refresh_access_token(self) -> bool:
+    async def refresh_access_token(self, *, expected_token: str | None = None) -> bool:
         if not self.refresh_token or not self.client_id:
             return False
         async with self._auth_lock:
+            if expected_token is not None and self.token != expected_token:
+                return bool(self.token)
             old_refresh = self.refresh_token
             try:
                 r = await self._request(
@@ -213,33 +242,44 @@ class TwitchGateway:
                         "grant_type": "refresh_token",
                         "refresh_token": old_refresh,
                     },
-                    timeout=8,
+                    timeout=15,
                 )
                 if r.status_code != 200:
+                    if r.status_code in (400, 401):
+                        self._reauth_required = True
+                        self.connected = False
                     self.last_error = f"OAuth refresh: HTTP {r.status_code}: {r.text[:240]}"
                     return False
                 body = r.json()
-                self.token = str(body.get("access_token", "")).strip()
+                new_token = str(body.get("access_token", "")).strip()
+                if not new_token:
+                    raise RuntimeError("Twitch hat keinen Access Token zurückgegeben")
+                self.token = new_token
                 # Device-flow refresh tokens are single-use; always replace with the newly returned one.
                 self.refresh_token = str(body.get("refresh_token", "") or old_refresh).strip()
                 self.scopes = list(body.get("scope") or self.scopes)
                 expires_in = int(body.get("expires_in", 0) or 0)
                 self.expires_at = time.time() + expires_in if expires_in else 0.0
                 self.last_error = ""
+                self._reauth_required = False
                 self._save_auth()
                 return bool(self.token)
             except Exception as exc:
-                self.last_error = f"OAuth refresh: {exc}"
+                self.last_error = f"OAuth refresh: {error_detail(exc)}"
                 return False
 
     async def start_device_authorization(self) -> dict[str, Any]:
+        async with self._poll_lock:
+            return await self._start_device_authorization()
+
+    async def _start_device_authorization(self) -> dict[str, Any]:
         if not self.client_id:
             raise RuntimeError("Twitch Client-ID fehlt")
         r = await self._request(
             "POST",
             self.OAUTH_DEVICE,
             data={"client_id": self.client_id, "scopes": " ".join(self.required_scopes)},
-            timeout=8,
+            timeout=15,
         )
         if r.status_code != 200:
             raise RuntimeError(f"Twitch Device Login: HTTP {r.status_code}: {r.text[:300]}")
@@ -253,10 +293,33 @@ class TwitchGateway:
             "expires_at": time.time() + expires,
             "next_poll_at": 0.0,
         }
+        self._validation_pending = False
         return {"ok": True, "status": "pending", **self.status()["device_auth"]}
 
     async def poll_device_authorization(self) -> dict[str, Any]:
+        # Browsers may poll twice; a device code can only be exchanged once.
+        async with self._poll_lock:
+            return await self._poll_device_authorization()
+
+    async def _finish_device_validation(self) -> dict[str, Any]:
+        if not await self.validate_token(refresh_on_401=False):
+            if self._reauth_required:
+                self._validation_pending = False
+                self._device_flow = None
+                self._save_auth()
+                raise TwitchAuthError(self.last_error + ". Bitte erneut mit Twitch anmelden.")
+            return {"ok": True, "status": "validating", "retry_after": 5, "message": self.last_error}
+        self._device_flow = None
+        self._save_auth()
+        return {"ok": True, "status": "authorized", "twitch": self.status()}
+
+    async def _poll_device_authorization(self) -> dict[str, Any]:
+        if self._validation_pending:
+            return await self._finish_device_validation()
         flow = self._device_flow
+        if self.authenticated() and (not flow or flow.get("token_received")):
+            self._device_flow = None
+            return {"ok": True, "status": "authorized", "twitch": self.status()}
         if not flow:
             return {"ok": False, "status": "not_started"}
         now = time.time()
@@ -266,48 +329,57 @@ class TwitchGateway:
         if now < float(flow.get("next_poll_at", 0)):
             return {"ok": True, "status": "pending", "retry_after": max(1, int(flow["next_poll_at"] - now))}
         flow["next_poll_at"] = now + int(flow.get("interval", 5))
-        r = await self._request(
-            "POST",
-            self.OAUTH_TOKEN,
-            data={
-                "client_id": self.client_id,
-                "scopes": " ".join(self.required_scopes),
-                "device_code": flow["device_code"],
-                "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
-            },
-            timeout=8,
-        )
+        try:
+            async with self._auth_lock:
+                r = await self._request(
+                    "POST", self.OAUTH_TOKEN,
+                    data={"client_id": self.client_id, "scopes": " ".join(self.required_scopes),
+                          "device_code": flow["device_code"],
+                          "grant_type": "urn:ietf:params:oauth:grant-type:device_code"}, timeout=15,
+                )
+                if r.status_code == 200:
+                    body = r.json()
+                    new_token = str(body.get("access_token", "")).strip()
+                    if not new_token:
+                        raise RuntimeError("Twitch hat keinen Access Token zurückgegeben")
+                    self.token = new_token
+                    self.refresh_token = str(body.get("refresh_token", "")).strip()
+                    self.scopes = list(body.get("scope") or [])
+                    self.expires_at = time.time() + int(body.get("expires_in", 0) or 0)
+                    # Never associate a new token with the previous account's IDs.
+                    self.broadcaster_id = self.bot_user_id = self.eventsub_user_id = self.login = ""
+                    self._reauth_required = False
+                    self._validation_pending = True
+                    flow["token_received"] = True
+                    self._save_auth()
+        except httpx.RequestError as exc:
+            self.last_error = f"Twitch Device Login: {error_detail(exc)}"
+            return {"ok": True, "status": "pending", "retry_after": 5, "message": self.last_error}
         if r.status_code == 400:
             try:
-                message = str(r.json().get("message", "")).lower()
+                message = str(r.json().get("message") or r.json().get("error", "")).lower()
             except Exception:
                 message = r.text.lower()
             if "authorization_pending" in message:
                 return {"ok": True, "status": "pending", "retry_after": int(flow.get("interval", 5))}
             if "slow_down" in message:
                 flow["interval"] = int(flow.get("interval", 5)) + 5
+                flow["next_poll_at"] = now + flow["interval"]
                 return {"ok": True, "status": "pending", "retry_after": int(flow["interval"])}
+            if "expired" in message or "access_denied" in message:
+                self._device_flow = None
+                return {"ok": False, "status": "expired"}
             raise RuntimeError(f"Twitch Device Login: {r.text[:300]}")
         if r.status_code != 200:
             raise RuntimeError(f"Twitch Device Login: HTTP {r.status_code}: {r.text[:300]}")
-        body = r.json()
-        self.token = str(body.get("access_token", "")).strip()
-        self.refresh_token = str(body.get("refresh_token", "")).strip()
-        self.scopes = list(body.get("scope") or [])
-        expires_in = int(body.get("expires_in", 0) or 0)
-        self.expires_at = time.time() + expires_in if expires_in else 0.0
-        self.bot_user_id = ""
-        self.eventsub_user_id = ""
-        self._device_flow = None
-        ok = await self.validate_token(refresh_on_401=False)
-        if not ok:
-            raise RuntimeError(self.last_error or "Twitch Token konnte nicht validiert werden")
-        self.bot_user_id = self.broadcaster_id
-        self.eventsub_user_id = self.broadcaster_id
-        self._save_auth()
-        return {"ok": True, "status": "authorized", "twitch": self.status()}
+        return await self._finish_device_validation()
 
     async def logout(self, *, revoke: bool = True) -> None:
+        async with self._poll_lock:
+            async with self._auth_lock:
+                await self._logout(revoke=revoke)
+
+    async def _logout(self, *, revoke: bool = True) -> None:
         old_token = self.token
         if revoke and old_token and self.client_id:
             try:
@@ -325,14 +397,29 @@ class TwitchGateway:
         self.reward_id = ""
         self.connected = False
         self._device_flow = None
+        self._validation_pending = False
+        self._reauth_required = False
         self._clear_auth_file()
 
     async def _api_request(self, method: str, path: str, *, params: Any = None, json_body: Any = None, retry_auth: bool = True) -> httpx.Response:
-        if not self.token:
-            raise RuntimeError("Twitch ist nicht angemeldet")
-        r = await self._request(method, f"{self.HELIX}{path}", headers=self._headers(), params=params, json_body=json_body, timeout=8)
-        if r.status_code == 401 and retry_auth and self.refresh_token and await self.refresh_access_token():
-            return await self._api_request(method, path, params=params, json_body=json_body, retry_auth=False)
+        if not self.token or self._reauth_required:
+            raise TwitchAuthError("Twitch-Anmeldung ist ungültig. Bitte im Adminmenü erneut mit Twitch anmelden.")
+        sent_token = self.token
+        try:
+            r = await self._request(method, f"{self.HELIX}{path}", headers=self._headers(), params=params, json_body=json_body, timeout=15)
+        except httpx.RequestError as exc:
+            raise RuntimeError(f"Twitch API {method} {path}: {error_detail(exc)}. Anfrage fehlgeschlagen; bitte erneut versuchen.") from exc
+        if r.status_code == 401:
+            if retry_auth:
+                renewed = self.token != sent_token
+                if not renewed and self.refresh_token:
+                    renewed = await self.refresh_access_token(expected_token=sent_token)
+                if renewed:
+                    return await self._api_request(method, path, params=params, json_body=json_body, retry_auth=False)
+            self._reauth_required = True
+            self.connected = False
+            self.last_error = "Twitch hat die Anmeldung abgelehnt (HTTP 401). Bitte im Adminmenü erneut mit Twitch anmelden."
+            raise TwitchAuthError(self.last_error)
         return r
 
     async def _subscribe(self, session_id: str, event_type: str, condition: dict[str, str], version: str = "1") -> None:
@@ -384,13 +471,17 @@ class TwitchGateway:
         if not self.configured():
             self.last_error = "Twitch-Anmeldung fehlt"
             return
-        if not await self.validate_token():
-            return
         self.running = True
         url = self.EVENTSUB_URL
         backoff = 2
         while self.running:
             try:
+                if not await self.validate_token():
+                    if self._reauth_required:
+                        break
+                    await asyncio.sleep(backoff)
+                    backoff = min(30, backoff * 2)
+                    continue
                 async with websockets.connect(url, ping_interval=None, close_timeout=3) as ws:
                     self.connected = True
                     backoff = 2
@@ -413,22 +504,30 @@ class TwitchGateway:
                 break
             except Exception as exc:
                 self.connected = False
-                self.last_error = str(exc)
+                self.last_error = error_detail(exc)
+                if self._reauth_required:
+                    break
                 await asyncio.sleep(backoff)
                 backoff = min(30, backoff * 2)
         self.connected = False
 
     async def maintain_auth(self) -> None:
         """Validate the maintained OAuth session hourly and refresh public-client tokens when needed."""
+        next_check = time.time() + 3600
         while True:
-            await asyncio.sleep(3600)
+            await asyncio.sleep(60)
             try:
-                if self.token:
+                now = time.time()
+                expiring = bool(self.expires_at and self.expires_at <= now + 60)
+                if self.token and not self._reauth_required and (now >= next_check or expiring or self._validation_pending or not self.authenticated()):
+                    if expiring and self.refresh_token:
+                        await self.refresh_access_token(expected_token=self.token)
                     await self.validate_token()
+                    next_check = now + 3600
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
-                self.last_error = f"OAuth maintenance: {exc}"
+                self.last_error = f"OAuth maintenance: {error_detail(exc)}"
 
     async def stop(self) -> None:
         self.running = False
@@ -448,7 +547,7 @@ class TwitchGateway:
                 return False
             return True
         except Exception as exc:
-            self.last_error = f"Send chat: {exc}"
+            self.last_error = f"Send chat: {error_detail(exc)}"
             return False
 
     async def list_custom_rewards(self, *, manageable_only: bool = False) -> list[dict[str, Any]]:
@@ -517,7 +616,7 @@ class TwitchGateway:
             self._save_auth()
             return reward
         except Exception as exc:
-            self.reward_error = str(exc)
+            self.reward_error = "Medipak-Belohnung prüfen/anlegen: " + error_detail(exc)
             raise
 
     async def update_medipack_reward(self, *, title: str, cost: int, prompt: str = "") -> dict[str, Any]:

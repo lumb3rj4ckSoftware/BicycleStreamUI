@@ -22,7 +22,7 @@ from .events import EventManager
 from .persistence import ChallengeStateStore, SQLiteStore
 from .physical import PhysicalChallengeManager, gift_packages
 from .trainer import FakeTrainerAdapter, TrainerControlService
-from .twitch import TwitchGateway
+from .twitch import TwitchGateway, error_detail
 
 
 class StreamRuntime:
@@ -42,6 +42,7 @@ class StreamRuntime:
         self.trainer = TrainerControlService(self.config, trainer_adapter)
         self.physical = PhysicalChallengeManager(self.config, self.trainer)
         self.boss = BossEngine(self.config, self.db, persist=True)
+        self._pending_final_boss = None
         self.sim_trainer = TrainerControlService(self.config, FakeTrainerAdapter())
         self.sim_physical = PhysicalChallengeManager(self.config, self.sim_trainer)
         self.sim_boss = BossEngine(self.config, None, persist=False)
@@ -57,6 +58,8 @@ class StreamRuntime:
         self.last_tick = time.time()
         self._tasks: list[asyncio.Task] = []
         self._twitch_task: asyncio.Task | None = None
+        self._twitch_preparing = False
+        self._twitch_state_lock = asyncio.Lock()
         self._running = False
         self._last_bridge_mtime_ns = 0
         self._last_bridge_signature: tuple[Any, ...] | None = None
@@ -101,6 +104,7 @@ class StreamRuntime:
         if self._running:
             return
         self._running = True
+        self._twitch_preparing = True
         self._tasks = [
             asyncio.create_task(self._telemetry_loop(), name="telemetry-loop"),
             asyncio.create_task(self._tick_loop(), name="tick-loop"),
@@ -108,14 +112,27 @@ class StreamRuntime:
         if self.config.get("twitch", {}).get("third_party_emotes", True):
             self._tasks.append(asyncio.create_task(self._emote_refresh_loop(), name="emote-refresh"))
         self._tasks.append(asyncio.create_task(self.twitch.maintain_auth(), name="twitch-auth-maintenance"))
-        await self._prepare_twitch_auth()
-        await self._ensure_twitch_state()
+        self._tasks.append(asyncio.create_task(self._prepare_twitch_background(), name="twitch-startup"))
+
+    async def _prepare_twitch_background(self) -> None:
+        try:
+            await self._prepare_twitch_auth()
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            self.twitch.last_error = "Twitch-Start: " + error_detail(exc)
+            self.log.warning("%s; Adminseite und Telemetrie bleiben aktiv", self.twitch.last_error)
+        finally:
+            self._twitch_preparing = False
+        if self._running:
+            await self._ensure_twitch_state()
 
     async def stop(self) -> None:
         self._running = False
         if self._twitch_task:
             await self.twitch.stop()
             self._twitch_task.cancel()
+            await asyncio.gather(self._twitch_task, return_exceptions=True)
             self._twitch_task = None
         for task in self._tasks:
             task.cancel()
@@ -162,21 +179,31 @@ class StreamRuntime:
                 self.log.warning("Medipak reward could not be ensured on startup: %s", exc)
 
     async def _restart_twitch_task(self) -> None:
-        if self._twitch_task:
-            await self.twitch.stop()
-            self._twitch_task.cancel()
-            await asyncio.gather(self._twitch_task, return_exceptions=True)
-            self._twitch_task = None
-        self.twitch.running = False
-        await self._ensure_twitch_state()
+        async with self._twitch_state_lock:
+            if self._twitch_task:
+                await self.twitch.stop()
+                self._twitch_task.cancel()
+                await asyncio.gather(self._twitch_task, return_exceptions=True)
+                self._twitch_task = None
+            self.twitch.running = False
+            await self._sync_twitch_state()
 
     async def _ensure_twitch_state(self) -> None:
+        async with self._twitch_state_lock:
+            await self._sync_twitch_state()
+
+    async def _sync_twitch_state(self) -> None:
+        if not self._running or self._twitch_preparing:
+            return
+        if self._twitch_task and self._twitch_task.done():
+            self._twitch_task = None
         wanted = bool(self.config.get("features", {}).get("twitch_integration"))
         if wanted and not self._twitch_task and self.twitch.configured():
             self._twitch_task = asyncio.create_task(self.twitch.run(), name="twitch-eventsub")
         elif (not wanted or not self.twitch.configured()) and self._twitch_task:
             await self.twitch.stop()
             self._twitch_task.cancel()
+            await asyncio.gather(self._twitch_task, return_exceptions=True)
             self._twitch_task = None
 
     def _bridge_path(self) -> Path:
@@ -192,9 +219,16 @@ class StreamRuntime:
                 if path.exists():
                     stat = path.stat()
                     if stat.st_mtime_ns != self._last_bridge_mtime_ns:
-                        self._last_bridge_mtime_ns = stat.st_mtime_ns
-                        raw = json.loads(path.read_text(encoding="utf-8"))
+                        for attempt in range(3):
+                            try:
+                                raw = json.loads(path.read_text(encoding="utf-8"))
+                                break
+                            except (json.JSONDecodeError, PermissionError):
+                                if attempt == 2:
+                                    raise
+                                await asyncio.sleep(0.05)
                         await self.process_telemetry(raw)
+                        self._last_bridge_mtime_ns = stat.st_mtime_ns
                         self.telemetry_health["last_read"] = time.time()
                         self.telemetry_health["last_error"] = ""
             except asyncio.CancelledError:
@@ -237,8 +271,11 @@ class StreamRuntime:
         elif t == "MILESTONE_100" and self.config["features"].get("milestone_100"):
             self.events.emit(t, {"mark_km": trigger["mark_km"]}, dedupe_key=trigger.get("dedupe_key"))
         elif t == "GOAL_COMPLETE":
-            self.events.emit(t, {"mark_km": trigger["mark_km"]}, dedupe_key=trigger.get("dedupe_key"))
+            event_type = "FINAL_BOSS_READY" if self.config["features"].get("boss_battles") else t
+            self.events.emit(event_type, {"mark_km": trigger["mark_km"]}, dedupe_key=trigger.get("dedupe_key"))
         elif t == "BOSS_SPAWN" and self.config["features"].get("boss_battles"):
+            if self.boss.active and abs(float(trigger["mark_km"]) - float(self.config["challenge"]["target_km"])) < 1e-6:
+                self._pending_final_boss = dict(trigger)
             if not self.boss.active:
                 snap = self.boss.start(trigger["boss_type"], trigger["mark_km"], self.active_chatter_count())
                 self.events.emit(
@@ -272,6 +309,7 @@ class StreamRuntime:
                     if added:
                         self.events.emit("RIDER_BOOST", {"seconds": added})
             self._expire_chatters(now)
+            await self._ensure_twitch_state()
             await asyncio.sleep(0.2)
 
     def _expire_chatters(self, now: float | None = None) -> None:
@@ -389,10 +427,22 @@ class StreamRuntime:
                 self.log.warning("Could not refund duplicate Medipak redemption: %s", exc)
 
     def _emit_boss_end(self, summary: dict[str, Any]) -> None:
-        if summary.get("result") == "won":
-            self.events.emit("BOSS_DEFEATED", summary)
-        else:
-            self.events.emit("BOSS_ESCAPED", summary)
+        won = summary.get("result") == "won"
+        if not (won and summary.get("final_boss")):
+            self.events.emit("BOSS_DEFEATED" if won else "BOSS_ESCAPED", summary, dedupe_key="result:" + str(summary["fight_id"]))
+        if won and summary.get("final_boss"):
+            simulation = bool(summary.get("simulation"))
+            already_won = self.challenge.state.get("final_boss_victory")
+            if simulation or not already_won:
+                if not simulation:
+                    self.challenge.state["final_boss_victory"] = summary["fight_id"]
+                    self.state_store.save()
+                self.events.emit("CHALLENGE_FINALE", summary, dedupe_key="finale:" + str(summary["fight_id"]))
+        if not summary.get("simulation") and self._pending_final_boss and not self.boss.active:
+            trigger = self._pending_final_boss
+            self._pending_final_boss = None
+            snap = self.boss.start("major", trigger["mark_km"], self.active_chatter_count())
+            self.events.emit("BOSS_INCOMING", {"boss_type": "major", "mark_km": snap["km_mark"], "hp": snap["start_hp"], "final_boss": True})
 
     def active_boss_snapshot(self) -> dict[str, Any] | None:
         return self.sim_boss.snapshot() if self.simulation["active"] else self.boss.snapshot()
@@ -408,6 +458,21 @@ class StreamRuntime:
         if speed >= float(h["level1_kmh"]):
             return 1
         return 0
+
+    def boss_warning(self, total_km: float, *, simulation: bool = False, boss_active: bool = False) -> dict[str, Any] | None:
+        if boss_active or not self.config["features"].get("boss_battles"):
+            return None
+        interval = int(self.config["boss"].get("interval_km", 20))
+        mark = (int(total_km // interval) + 1) * interval
+        target = float(self.config["challenge"]["target_km"])
+        remaining = mark - total_km
+        triggered = self.challenge.state.get("triggered_events", [])
+        if not simulation and f"boss:{mark:g}" in triggered:
+            return None
+        if not 0 < remaining <= 0.5 + 1e-9:
+            return None
+        major = int(self.config["boss"].get("major_interval_km", 100))
+        return {"mark_km": mark, "remaining_m": max(1, round(remaining * 1000)), "boss_type": "major" if mark % major == 0 else "small"}
 
     def overlay_state(self) -> dict[str, Any]:
         sim = bool(self.simulation["active"])
@@ -433,6 +498,10 @@ class StreamRuntime:
             "heat_level": self._heat_level(speed),
             "physical": physical,
             "boss": boss,
+            "boss_warning": self.boss_warning(challenge["total_km"], simulation=sim, boss_active=bool(boss)),
+            "boss_config": deepcopy(self.config["boss"]),
+            "overlay_config": deepcopy(self.config.get("overlay", {"emote_size_px": 58, "emote_speed_percent": 100})),
+            "sub_challenge_config": deepcopy(self.config["physical_challenges"]),
             "event": self.events.active,
             "event_seq": self.events.last_seq,
             "features": deepcopy(self.config["features"]),
@@ -484,7 +553,7 @@ class StreamRuntime:
         if self.boss.active or self.physical.active or self.physical.queue:
             raise ValueError("Simulation kann nicht starten, solange ein echter Boss/Physical Challenge aktiv ist")
         self.simulation["active"] = True
-        self.simulation["progress_percent"] = self.challenge.snapshot()["percent"]
+        self.simulation["progress_percent"] = float(self.challenge.state["total_km"]) / float(self.config["challenge"]["target_km"]) * 100
         self.simulation["plan_status"] = None
         self.simulation["telemetry"] = deepcopy(self.telemetry)
         self.sim_physical.queue.clear()
@@ -645,7 +714,7 @@ class StreamRuntime:
             reply = self.commands.handle(text, user["user_id"], user["display_name"])
             return {"ok": True, "reply": reply or "Kein Befehl / Cooldown aktiv. Emotes werden bei aktivem Boss verarbeitet.", "simulation": True}
         elif action == "sim_progress":
-            self.simulation["progress_percent"] = max(0.0, min(100.0, float(payload["percent"])))
+            self.simulation["progress_percent"] = max(0.0, float(payload["percent"]))
         elif action == "sim_plan":
             status = str(payload["status"])
             if status == "back_on_track":
@@ -655,6 +724,13 @@ class StreamRuntime:
                 self.simulation["plan_status"] = status
             else:
                 raise ValueError("invalid plan status")
+        elif action == "sim_boss_warning":
+            self.sim_boss.active = None
+            target = float(self.config["challenge"]["target_km"])
+            interval = int(self.config["boss"].get("interval_km", 20))
+            mark = min(float(payload.get("mark_km", interval)), target)
+            self.simulation["progress_percent"] = max(0, mark - 0.5) / target * 100
+            self.events.clear_transient()
         elif action == "sim_heat":
             speed = float(payload["speed"])
             self.simulation["telemetry"].update({"speed": speed, "power": float(payload.get("power", 320)), "cadence": float(payload.get("cadence", 92))})
@@ -676,7 +752,11 @@ class StreamRuntime:
             viewers = int(payload["viewers"])
             task, mode = self.sim_physical.enqueue_raid(viewers)
             self.events.emit("RAID_STANDING", {"raider": payload.get("raider", "TestRaid"), "viewers": viewers, "seconds": task.duration_s, "mode": mode, "simulation": True})
-        elif action == "sim_boss":
+        elif action in {"sim_boss", "sim_final_boss"}:
+            if action == "sim_final_boss":
+                payload = {**payload, "boss_type": "major", "mark_km": self.config["challenge"]["target_km"]}
+                self.simulation["progress_percent"] = 100
+                self.events.clear_transient()
             boss_type = str(payload.get("boss_type", "small"))
             chatters = int(payload.get("chatters", 3))
             if self.sim_boss.active:
@@ -684,23 +764,29 @@ class StreamRuntime:
             snap = self.sim_boss.start(boss_type, float(payload.get("mark_km", 20 if boss_type == "small" else 100)), chatters, simulation=True)
             self.events.emit("BOSS_INCOMING", {"boss_type": boss_type, "mark_km": snap["km_mark"], "hp": snap["start_hp"], "simulation": True})
         elif action == "sim_hit":
+            if not self.sim_boss.active and self.sim_boss.last_result:
+                return {**self.overlay_state(), "message": "Kampf beendet. Starte einen neuen Boss ausdrücklich über die Boss-Tasten."}
             if not self.sim_boss.active:
                 self.sim_boss.start("small", 20, int(payload.get("chatters", 3)), simulation=True)
             user = {"user_id": str(payload.get("user_id", "sim-user")), "login": str(payload.get("login", "simuser")), "display_name": str(payload.get("display_name", "SimUser"))}
-            code = str(payload.get("emote", "Kappa"))
-            emote = self.emotes.first_in_text(code)
-            if not emote:
-                known = {"Kappa": "25", "PogChamp": "305954156", "LUL": "425618", "HeyGuys": "30259"}
+            text = str(payload.get("emote", "Kappa"))[:500]
+            known = {"Kappa": "25", "PogChamp": "305954156", "LUL": "425618", "HeyGuys": "30259"}
+            fragments = []
+            for code in text.split():
                 eid = str(payload.get("emote_id") or known.get(code, ""))
-                if not eid:
-                    raise ValueError("Emote nicht im geladenen Katalog. Nutze Kappa, LUL, HeyGuys oder ein Kanal-/Global-Emote von 7TV/BTTV.")
-                emote = {"id": eid, "code": code, "text": code, "provider": "Twitch", "url": f"https://static-cdn.jtvnw.net/emoticons/v2/{eid}/default/dark/3.0"}
-            hit = self.sim_boss.hit(user, subscriber=bool(payload.get("subscriber", False)), emote=emote)
+                fragments.append({"type": "emote", "text": code, "emote": {"id": eid}} if eid else {"type": "text", "text": code})
+            emotes = emotes_from_fragments(fragments, self.emotes)
+            if not emotes:
+                raise ValueError("Kein erkanntes Emote. Nutze Kappa, LUL, HeyGuys oder einen geladenen 7TV-/BTTV-Code.")
+            hit = self.sim_boss.hit(user, subscriber=bool(payload.get("subscriber", False)), emote=emotes[0])
             if hit:
+                hit["emotes"] = emotes
                 self.events.emit("BOSS_HIT", hit, duration=0)
                 if hit.get("finished"):
                     self._emit_boss_end(hit["finished"])
         elif action == "sim_medipack":
+            if not self.sim_boss.active and self.sim_boss.last_result:
+                return self.overlay_state()
             if not self.sim_boss.active:
                 self.sim_boss.start("small", 20, 3, simulation=True)
             user = {"user_id": str(payload.get("user_id", "sim-healer")), "login": str(payload.get("login", "simhealer")), "display_name": str(payload.get("display_name", "SimHealer"))}
@@ -708,6 +794,8 @@ class StreamRuntime:
             if result and result.get("applied"):
                 self.events.emit("BOSS_HEAL", {**result, "simulation": True})
         elif action == "sim_rider_boost":
+            if not self.sim_boss.active and self.sim_boss.last_result:
+                return self.overlay_state()
             if not self.sim_boss.active:
                 self.sim_boss.start("small", 20, 3, simulation=True)
             seconds = self.sim_boss.add_rider_time(float(payload.get("seconds", self.config["boss"]["rider_bonus_seconds"])))

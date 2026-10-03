@@ -130,27 +130,25 @@ def first_emote_from_fragments(fragments: list[dict[str, Any]] | None, resolver:
 
 
 def emotes_from_fragments(fragments, resolver=None, text=""):
-    """All distinct visuals; damage is deliberately once per chat message."""
+    """Preserve every occurrence and its order. Damage stays once per message."""
     result = []
-    seen = set()
-    def add(emote):
-        key = (emote.get("provider"), emote.get("id") or emote.get("code"))
-        if key not in seen:
-            seen.add(key)
-            result.append(emote)
     for fragment in fragments or []:
         if fragment.get("type") == "emote":
             emote = first_emote_from_fragments([fragment])
             if emote:
-                add(emote)
+                # EventSub normally sends one emote per fragment. Also support
+                # an adjacent run of the same emote inside a single fragment.
+                words = str(fragment.get("text", "")).split()
+                count = len(words) if words and len(set(words)) == 1 else 1
+                result.extend(dict(emote) for _ in range(count))
         elif resolver and fragment.get("type") == "text":
             for token in _TOKEN_RE.findall(fragment.get("text", "")):
                 emote = resolver.first_in_text(token)
                 if emote:
-                    add(emote)
+                    result.append(emote)
     if resolver and not fragments:
         for token in _TOKEN_RE.findall(text):
             emote = resolver.first_in_text(token)
             if emote:
-                add(emote)
+                result.append(emote)
     return result

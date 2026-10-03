@@ -29,13 +29,15 @@ class ChatCommandService:
         if not tokens:
             return None
         cmd = tokens[0].lower()
-        if cmd not in {"!km", "!heute", "!plan", "!next", "!topdamage", "!damage", "!boss"}:
+        if cmd not in {"!km", "!heute", "!plan", "!next", "!topdamage", "!damage", "!boss", "!october1000"}:
             return None
         now = time.time()
         if not self._cooldown_ok(cmd, user_id, now):
             return None
         simulation = self.runtime.simulation["active"]
         snap = self.runtime.overlay_state()["challenge"]
+        if cmd == "!october1000":
+            return "1000 km im Oktober: !km – Gesamtstand | !heute – Tageskilometer | !plan – Zeitplan | !next – nächste Kilometer-Marken | !boss – laufender Boss | !damage – dein Schaden und Rang | !topdamage – Damage-Rangliste | !october1000 – diese Befehlsübersicht. Greift Monster mit euren Emotes an!"
         if cmd == "!km":
             return f"{snap['total_km']:.1f}/{snap['target_km']:.0f} km ({snap['percent']:.1f} %) – noch {snap['remaining_km']:.1f} km."
         if cmd == "!heute":

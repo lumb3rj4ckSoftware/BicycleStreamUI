@@ -1,11 +1,21 @@
 {
-  "version": 1,
-  "total_km": 0.0,
-  "daily_km": {},
-  "session_id": null,
-  "last_live_distance": null,
-  "last_live_timestamp": null,
-  "triggered_events": [],
-  "last_plan_status": "on_track",
-  "manual_adjustments": []
+  "daily_km": {
+    "2026-10-02": 50.64309903020768
+  },
+  "last_live_distance": 0.0,
+  "last_live_timestamp": 1791009322.5080574,
+  "last_plan_status": "ahead",
+  "manual_adjustments": [],
+  "session_id": "ant-6e3e031b-4cd9-405e-b39f-9deb121dde6f",
+  "total_km": 50.64309903020768,
+  "triggered_events": [
+    "boss:20",
+    "boss:40",
+    "milestone10:10",
+    "milestone10:20",
+    "milestone10:30",
+    "milestone10:40",
+    "milestone10:50"
+  ],
+  "version": 1
 }

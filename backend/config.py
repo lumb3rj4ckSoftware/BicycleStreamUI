@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import json
+import math
 from pathlib import Path
 from typing import Any
 
@@ -25,6 +26,9 @@ def load_config(path: str | Path = DEFAULT_CONFIG_PATH) -> dict[str, Any]:
     path = Path(path)
     with path.open("r", encoding="utf-8") as fh:
         config = json.load(fh)
+    config.setdefault("overlay", {})
+    config["overlay"].setdefault("emote_size_px", 58)
+    config["overlay"].setdefault("emote_speed_percent", 100)
     validate_config(config)
     return config
 
@@ -47,8 +51,15 @@ def validate_config(config: dict[str, Any]) -> None:
     major = int(b.get("major_interval_km", 100))
     if interval <= 0 or major <= 0 or major % interval != 0:
         raise ValueError("boss.major_interval_km must be a positive multiple of boss.interval_km")
-    if int(b.get("small_duration_seconds", 0)) <= 0 or int(b.get("major_duration_seconds", 0)) <= 0:
-        raise ValueError("boss durations must be > 0")
+    overlay = config.get("overlay", {})
+    for name, default, low, high in [("emote_size_px", 58, 24, 160), ("emote_speed_percent", 100, 50, 200)]:
+        value = float(overlay.get(name, default))
+        if not math.isfinite(value) or not low <= value <= high:
+            raise ValueError(f"overlay.{name} muss zwischen {low} und {high} liegen")
+    for key in ("small_duration_seconds", "major_duration_seconds"):
+        value = float(b.get(key, 0))
+        if not math.isfinite(value) or not 1 <= value <= 3600:
+            raise ValueError(f"boss.{key} muss zwischen 1 und 3600 Sekunden liegen")
     h = config.get("heat", {})
     levels = [float(h.get("level1_kmh", 30)), float(h.get("level2_kmh", 35)), float(h.get("level3_kmh", 40))]
     if not (levels[0] < levels[1] < levels[2]):

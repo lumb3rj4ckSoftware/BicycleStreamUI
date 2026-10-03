@@ -49,7 +49,7 @@
     "rider_assist": true,
     "speed_heat": true,
     "sub_challenges": true,
-    "trainer_control": false,
+    "trainer_control": true,
     "twitch_integration": true
   },
   "heat": {
@@ -60,6 +60,10 @@
     "level2_particles": 42,
     "level3_kmh": 40.0,
     "level3_particles": 70
+  },
+  "overlay": {
+    "emote_size_px": 92,
+    "emote_speed_percent": 60
   },
   "physical_challenges": {
     "climb_10_grade_percent": 1.0,

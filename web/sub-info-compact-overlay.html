@@ -1,0 +1,10 @@
+<!doctype html><html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/static/common.css"><title>Sub-Info Kompakt</title><link rel="stylesheet" href="/static/sub-info.css"></head><body><section id="compactCard" class="compactCard"><h1>SUB → CHALLENGE</h1><div id="tierViewport" class="viewport"></div></section>
+<script type="module">
+import{connect,qs}from'/static/common.js';
+let current=0,config={},currentNode=null;
+function data(){return[{n:5,name:'SPRINT',detail:'Mehr Tempo für Stein!',time:'+'+(config.sprint_5_seconds??30)+' s',color:'#64ddff'},{n:10,name:(config.climb_10_grade_percent??1)+' % STEIGUNG',detail:'Der Berg ruft.',time:(config.climb_10_seconds??90)+' s',color:'#b794ff'},{n:15,name:(config.climb_15_grade_percent??2)+' % + STEHEND',detail:'Sprint im Stehen am Berg!',time:(config.climb_15_seconds??90)+' s',color:'#ff9c66'}]}
+function fill(el,item){el.style.setProperty('--accent',item.color);el.querySelector('.number').textContent=item.n;el.querySelector('.name').textContent=item.name;el.querySelector('.detail').textContent=item.detail;el.querySelector('.time').textContent=item.time}
+function show(){const old=currentNode,el=document.createElement('div');el.className='tier in';el.innerHTML='<div class="number"></div><div class="copy"><div class="name"></div><div class="detail"></div></div><div class="time"></div>';fill(el,data()[current]);qs('#tierViewport').append(el);currentNode=el;if(old){old.className='tier out';setTimeout(()=>old.remove(),450)}}
+function update(s){config=s.sub_challenge_config||{};qs('#compactCard').classList.toggle('disabled',s.features?.sub_challenges===false);if(currentNode)fill(currentNode,data()[current])}
+show();setInterval(()=>{current=(current+1)%3;show()},5000);connect(update,()=>{});
+</script></body></html>

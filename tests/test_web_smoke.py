@@ -18,7 +18,7 @@ def test_pages_and_api_smoke(tmp_path, config):
     rt=StreamRuntime(root=work,trainer_adapter=FakeTrainerAdapter())
     app=create_app(rt)
     with TestClient(app) as client:
-        for url in ['/challenge-overlay','/event-overlay','/dashboard','/admin']:
+        for url in ['/challenge-overlay','/event-overlay','/dashboard','/admin','/sub-info-overlay','/sub-info-compact-overlay']:
             r=client.get(url);assert r.status_code==200;assert '<html' in r.text.lower()
             if url == '/admin':
                 assert 'Mit Twitch anmelden' in r.text

@@ -25,6 +25,7 @@ class ActiveFight:
     started_at: str
     monster_id: str = "ember-dragon"
     monster_name: str = "Emberfang"
+    final_boss: bool = False
     scaling_chatters: int = 0
     rider_bonus_s: float = 0.0
     medipacks: int = 0
@@ -42,6 +43,7 @@ class ActiveFight:
             "monster_id": self.monster_id,
             "monster_name": self.monster_name,
             "scaling_chatters": self.scaling_chatters,
+            "final_boss": self.final_boss,
             "km_mark": self.km_mark,
             "start_hp": self.start_hp,
             "hp": self.hp,
@@ -79,6 +81,9 @@ class BossEngine:
         if self.active:
             return self.active.snapshot(now)
         now = now if now is not None else time.time()
+        final_boss = km_mark is not None and abs(float(km_mark) - float(self.config["challenge"]["target_km"])) < 1e-6
+        if final_boss:
+            boss_type = "major"
         b = self.config["boss"]
         duration = float(b["major_duration_seconds"] if boss_type == "major" else b["small_duration_seconds"])
         hp = self.hp_for(boss_type, active_chatters)
@@ -89,7 +94,7 @@ class BossEngine:
             fight_id=str(uuid.uuid4()), boss_type=boss_type, km_mark=km_mark, start_hp=hp, hp=hp,
             duration_s=duration, started_at_epoch=now, end_at_epoch=now + duration,
             started_at=utc_now_iso(), simulation=simulation,
-            monster_id=monster["id"], monster_name=monster["name"], scaling_chatters=max(0, int(active_chatters)),
+            final_boss=final_boss, monster_id=monster["id"], monster_name=monster["name"], scaling_chatters=max(0, int(active_chatters)),
         )
         self.active = fight
         if self.persist and self.store and not simulation:

@@ -18,7 +18,7 @@ Die Monster sind bereits vollständig eingebunden. Kein manueller Eintrag im Cod
 - 20 eigene generierte Fantasy-Monster statt der Kugel. Zufällige Reihenfolge; innerhalb eines Durchlaufs erscheint jedes Monster einmal.
 - Die Bilder bewegen sich über CSS: Schweben, leichte Rotation, Größenänderung und Trefferreaktion. Das sind bewegte Einzelbilder, keine Animation mit einzeln gezeichneten Bewegungsphasen.
 - Emotes fliegen vom unteren Bildschirmrand auf das Monster. Am Einschlag: Funken, Aufblitzen, Ruck und Schadenszahl.
-- Alle unterschiedlichen erkannten Emotes einer Nachricht können mitfliegen; Twitch, 7TV, BTTV und zusätzlich FFZ. Kein vorgewähltes Kampf-Emote. Doppelte Emotes werden für die Darstellung zusammengefasst; maximal 12 verschiedene Bilder pro Nachricht.
+- Alle erkannten Emote-Vorkommen einer Nachricht fliegen in Reihenfolge auf derselben Flugbahn; Twitch, 7TV, BTTV und zusätzlich FFZ. Kein vorgewähltes Kampf-Emote. Doppelte Emotes bleiben erhalten. Größe und Geschwindigkeit sind im Adminbereich einstellbar.
 - Schaden bleibt fair: ein Treffer pro Nachricht, 1 Damage bzw. 2 für Subs. Eine Nachricht mit 50 Emotes macht also nicht 50 Damage.
 - 7TV/BTTV: globale und in deinem Kanal aktivierte Emotes. Es können nicht automatisch sämtliche Emotes aller fremden Kanäle erkannt werden. Drittanbieter-Emotes brauchen eine erreichbare API/CDN und den korrekten Kanal nach dem Twitch-Login. Animationen der Provider werden übernommen, soweit das Bildformat sie enthält.
 - Meldungen während des Kampfs stehen in einer eigenen oberen Leiste. Monsterbild-Ladestatus und HP-Leiste sind getrennt.

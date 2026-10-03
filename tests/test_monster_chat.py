@@ -12,7 +12,7 @@ def test_all_emote_providers_and_punctuation():
     resolver._add('Wave', 'https://cdn.example/wave.gif', 'BTTV', 'b')
     fragments = [{'type':'emote','text':'Kappa','emote':{'id':'25'}}, {'type':'text','text':'Dance! Wave Dance'}]
     found = emotes_from_fragments(fragments, resolver)
-    assert [e['provider'] for e in found] == ['Twitch','7TV','BTTV']
+    assert [e['provider'] for e in found] == ['Twitch','7TV','BTTV','7TV']
     assert len(emotes_from_fragments([], resolver, 'Dance Wave')) == 2
 
 
